@@ -1,0 +1,114 @@
+package auth
+
+import (
+	"encoding/json"
+	"github.com/mitchellh/mapstructure"
+)
+
+type ErrorInfo struct {
+	Code          string `json:"code"`
+	Platform      string `json:"platform"`
+	Module        string `json:"module"`
+	Variant       string `json:"variant"`
+	Level         string `json:"level"`
+	Description   string `json:"description"`
+	EnImplication string `json:"en_implication"`
+	EnSolution    string `json:"en_solution"`
+	ZhImplication string `json:"zh_implication"`
+	ZhSolution    string `json:"zh_solution"`
+	DeImplication string `json:"de_implication"`
+	DeSolution    string `json:"de_solution"`
+	FrImplication string `json:"fr_implication"`
+	FrSolution    string `json:"fr_solution"`
+	ItImplication string `json:"it_implication"`
+	ItSolution    string `json:"it_solution"`
+	EsImplication string `json:"es_implication"`
+	EsSolution    string `json:"es_solution"`
+	CsImplication string `json:"cs_implication"`
+	CsSolution    string `json:"cs_solution"`
+	SkImplication string `json:"sk_implication"`
+	SkSolution    string `json:"sk_solution"`
+	PlImplication string `json:"pl_implication"`
+	PlSolution    string `json:"pl_solution"`
+	NlImplication string `json:"nl_implication"`
+	NlSolution    string `json:"nl_solution"`
+	DaImplication string `json:"da_implication"`
+	DaSolution    string `json:"da_solution"`
+	SvImplication string `json:"sv_implication"`
+	SvSolution    string `json:"sv_solution"`
+	SlImplication string `json:"sl_implication"`
+	SlSolution    string `json:"sl_solution"`
+	PtImplication string `json:"pt_implication"`
+	PtSolution    string `json:"pt_solution"`
+	HuImplication string `json:"hu_implication"`
+	HuSolution    string `json:"hu_solution"`
+	HrImplication string `json:"hr_implication"`
+	HrSolution    string `json:"hr_solution"`
+	NoImplication string `json:"no_implication"`
+	NoSolution    string `json:"no_solution"`
+	FiImplication string `json:"fi_implication"`
+	FiSolution    string `json:"fi_solution"`
+	RoImplication string `json:"ro_implication"`
+	RoSolution    string `json:"ro_solution"`
+	BgImplication string `json:"bg_implication"`
+	BgSolution    string `json:"bg_solution"`
+	EtImplication string `json:"et_implication"`
+	EtSolution    string `json:"et_solution"`
+	LvImplication string `json:"lv_implication"`
+	LvSolution    string `json:"lv_solution"`
+	LtImplication string `json:"lt_implication"`
+	LtSolution    string `json:"lt_solution"`
+}
+
+type Response[T any] struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data *T     `json:"data,omitempty"`
+}
+
+type LoginResponseUserInformation struct {
+	AreaCode          string  `json:"areaCode"`
+	DomainAbbreviation string `json:"domainAbbreviation"`
+	UserId            string  `json:"userId"`
+	UserAccount       string  `json:"userAccount"`
+	AuthType          string  `json:"authType"`
+	Email             *string `json:"email,omitempty"`
+}
+
+type LoginResponseData struct {
+	AccessToken       string                      `json:"access_token"`
+	TokenType         string                      `json:"token_type"`
+	RefreshToken      string                      `json:"refresh_token"`
+	ExpiresIn         int                         `json:"expires_in"`
+	AuthorizationCode string                      `json:"authorization_code"`
+	UserInformation   LoginResponseUserInformation `json:"userInformation"`
+	Jti               *string                     `json:"jti,omitempty"`
+	GrantType         *string                     `json:"grant_type,omitempty"`
+	Scope             *string                     `json:"scope,omitempty"`
+}
+
+func (r *Response[T]) UnmarshalJSON(data []byte) error {
+	type Alias Response[T]
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r *LoginResponseData) UnmarshalJSON(data []byte) error {
+	type Alias LoginResponseData
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(r),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	return nil
+}
