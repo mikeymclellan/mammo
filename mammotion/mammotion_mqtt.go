@@ -47,12 +47,9 @@ func NewMammotionMQTT(regionID, productKey, deviceName, deviceSecret, iotToken s
 		clientID = fmt.Sprintf("golang-%s", deviceName)
 	}
 
-    var raw_broker bytes.Buffer
-    raw_broker.WriteString("tls://")
-    raw_broker.WriteString(productKey)
-    raw_broker.WriteString(".iot-as-mqtt.cn-shanghai.aliyuncs.com:1883")
-    opts := mqtt.NewClientOptions().AddBroker(raw_broker.String());
-
+    regionID = "cn-shanghai"
+    opts := mqtt.NewClientOptions()
+    opts.AddBroker(fmt.Sprintf("tls://%s.iot-as-mqtt.%s.aliyuncs.com:1883", productKey, regionID))
     auth := calculate_sign(clientID, productKey, deviceName, deviceSecret)
     opts.SetClientID(auth.mqttClientId)
     opts.SetUsername(auth.username)
@@ -208,7 +205,6 @@ func calculate_sign(clientId, productKey, deviceName, deviceSecret string) AuthI
     raw_passwd.WriteString("timestamp")
     raw_passwd.WriteString(timeStamp)
 
-    fmt.Println("Raw password before SHA1: ", raw_passwd.String())
     mac := hmac.New(sha1.New, []byte(deviceSecret))
     mac.Write([]byte(raw_passwd.String()))
     password := fmt.Sprintf("%02x", mac.Sum(nil))
