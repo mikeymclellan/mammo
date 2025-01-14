@@ -57,6 +57,13 @@ type SendCloudCommandResponse struct {
 type ConnectResponse struct {
 	Data struct {
 		Vid string `json:"vid"`
+        Data struct {
+            Device struct {
+                Data struct {
+                    DeviceId string `json:"deviceId"`
+                } `json:"data"`
+            } `json:"device"`
+        } `json:"data"`
 	} `json:"data"`
 }
 
@@ -99,6 +106,7 @@ type LoginByOAuthResponse struct {
         //Successful bool `json:"successful"`
         TraceId string `json:"traceId"`
         Vid string `json:"vid"`
+        DeviceId string `json:"deviceId"`
     } `json:"data"`
     ErrorMsg string `json:"errorMsg"`
 }
@@ -567,6 +575,8 @@ func (cg *CloudIOTGateway) Connect() error {
 
 	if resp.StatusCode == 200 {
 		var connectResp ConnectResponse
+        //fmt.Println("data", resp.Body)
+        //panic("error")
 		if err := mapToStruct(data, &connectResp); err != nil {
 			return err
 		}
@@ -604,7 +614,7 @@ func (cg *CloudIOTGateway) LoginByOAuth(countryCode, authCode string) (*LoginByO
 			"sdkVersion":         "3.4.2",
 			"utdid":              cg.Utdid,
 			"umidToken":          cg.Utdid,
-			"deviceId":           "sdfsdkfjhdskgjhf", // cg.ConnectResponse.Data.Device.Data.DeviceId,
+			"deviceId":           cg.ConnectResponse.Data.Data.Device.Data.DeviceId,
 			"USE_OA_PWD_ENCRYPT": "true",
 			"USE_H5_NC":          "true",
 		},

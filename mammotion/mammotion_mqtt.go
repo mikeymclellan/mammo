@@ -46,54 +46,39 @@ func NewMammotionMQTT(regionID, productKey, deviceName, deviceSecret, iotToken s
 	if clientID == "" {
 		clientID = fmt.Sprintf("golang-%s", deviceName)
 	}
-	opts := mqtt.NewClientOptions()
-    opts.AddBroker(fmt.Sprintf("tcp://%s.iot-as-mqtt.%s.aliyuncs.com:1883", productKey, regionID))
-    auth := calculate_sign(clientID, productKey, deviceName, deviceSecret, fmt.Sprintf("%d", time.Now().Unix()))
+
+    var raw_broker bytes.Buffer
+    raw_broker.WriteString("tls://")
+    raw_broker.WriteString(productKey)
+    raw_broker.WriteString(".iot-as-mqtt.cn-shanghai.aliyuncs.com:1883")
+    opts := mqtt.NewClientOptions().AddBroker(raw_broker.String());
+
+    auth := calculate_sign(clientID, productKey, deviceName, deviceSecret)
     opts.SetClientID(auth.mqttClientId)
     opts.SetUsername(auth.username)
     opts.SetPassword(auth.password)
     opts.SetKeepAlive(60 * 2 * time.Second)
     opts.SetDefaultPublishHandler(f)
-	opts.SetAutoReconnect(true)
-    opts.SetConnectTimeout(30 * time.Second)
-    opts.ProtocolVersion = 4
-	opts.SetConnectionLostHandler(func(client mqtt.Client, err error) {
-		log.Println("Disconnected")
-	})
-    opts.OnConnect = func(c mqtt.Client) {
-		fmt.Println("connected. ")
-	}
 
-	opts.SetOnConnectHandler(func(client mqtt.Client) {
-		log.Println("Connected")
-	})
-
-    tlsConfig := &tls.Config{InsecureSkipVerify: true, ClientAuth: tls.NoClientCert}
-	opts.SetTLSConfig(tlsConfig)
-
+    /*
     fmt.Println("MQTT Client Options:")
     fmt.Println("  Broker:", opts.Servers)
     fmt.Println("  Client ID:", opts.ClientID)
     fmt.Println("  Username:", opts.Username)
+    fmt.Println("  Password:", opts.Password)
     fmt.Println("  Protocol Version:", opts.ProtocolVersion)
     fmt.Println("  clientID:", clientID)
     fmt.Println("  productKey:", productKey)
     fmt.Println("  deviceName:", deviceName)
     fmt.Println("  deviceSecret:", deviceSecret)
+    */
+    tlsconfig := NewTLSConfig()
+    opts.SetTLSConfig(tlsconfig)
 
-    ccc := mqtt.NewClient(opts);
-	log.Println("MQTT Connecting...")
-    
-   
     mqtt.ERROR = log.New(os.Stdout, "[ERROR] ", 0)
 	mqtt.CRITICAL = log.New(os.Stdout, "[CRIT] ", 0)
 	mqtt.WARN = log.New(os.Stdout, "[WARN]  ", 0)
 	mqtt.DEBUG = log.New(os.Stdout, "[DEBUG] ", 0)
-
-	if token := ccc.Connect(); token.Wait() && token.Error() != nil {
-        log.Fatal(fmt.Sprintf("Connection error: %s", token.Error()))
-	}
-    log.Println("Connected")
 
 	return &MammotionMQTT{
 		RegionID:     regionID,
@@ -112,11 +97,14 @@ func NewMammotionMQTT(regionID, productKey, deviceName, deviceSecret, iotToken s
 
 func (m *MammotionMQTT) ConnectAsync() {
 
-    log.Println(m.MQTTClient) 
+    if (m.MQTTClient.IsConnected()) {
+        return
+    }
 	log.Println("Connecting...")
 	if token := m.MQTTClient.Connect(); token.Wait() && token.Error() != nil {
         log.Fatal(fmt.Sprintf("Connection error: %s", token.Error()))
 	}
+    println("MQTT Connected")
 }
 
 func (m *MammotionMQTT) Disconnect() {
@@ -208,17 +196,17 @@ type AuthInfo struct {
     password, username, mqttClientId string;
 }
 
-func calculate_sign(clientId, productKey, deviceName, deviceSecret, timeStamp string) AuthInfo {
+func calculate_sign(clientId, productKey, deviceName, deviceSecret string) AuthInfo {
+
+    timeStamp := fmt.Sprintf("%d", time.Now().Unix())
     var raw_passwd bytes.Buffer
-    raw_passwd.WriteString("clientId" + clientId)
+    raw_passwd.WriteString("clientId" + fmt.Sprintf("%s&%s", productKey, deviceName))
     raw_passwd.WriteString("deviceName")
     raw_passwd.WriteString(deviceName)
     raw_passwd.WriteString("productKey")
     raw_passwd.WriteString(productKey);
-    /*
     raw_passwd.WriteString("timestamp")
     raw_passwd.WriteString(timeStamp)
-    */
 
     fmt.Println("Raw password before SHA1: ", raw_passwd.String())
     mac := hmac.New(sha1.New, []byte(deviceSecret))
@@ -227,14 +215,11 @@ func calculate_sign(clientId, productKey, deviceName, deviceSecret, timeStamp st
     username := deviceName + "&" + productKey;
 
     var MQTTClientId bytes.Buffer
-    MQTTClientId.WriteString(clientId)
+    MQTTClientId.WriteString(fmt.Sprintf("%s&%s", productKey, deviceName))
     // hmac, use sha1; securemode=2 means TLS connection 
-    MQTTClientId.WriteString("|securemode=2,signmethod=hmacsha1|")
-    /*
-    MQTTClientId.WriteString("|securemode=2,_v=paho-go-1.0.0,signmethod=hmacsha1,timestamp=")
+    MQTTClientId.WriteString("|securemode=2,signmethod=hmacsha1,timestamp=")
     MQTTClientId.WriteString(timeStamp)
     MQTTClientId.WriteString("|")
-    */
 
     auth := AuthInfo{password:password, username:username, mqttClientId:MQTTClientId.String()}
     return auth;
@@ -250,7 +235,10 @@ func NewTLSConfig() *tls.Config {
         panic(err)
     }
 
-    certpool.AppendCertsFromPEM(pemCerts)
+    if ok := certpool.AppendCertsFromPEM([]byte(pemCerts)); !ok {
+		fmt.Println("failed to parse root certificate")
+		panic(err)
+	}
 
     // Create tls.Config with desired tls properties
     return &tls.Config{
@@ -264,7 +252,7 @@ func NewTLSConfig() *tls.Config {
         ClientCAs: nil,
         // InsecureSkipVerify = verify that cert contents
         // match server. IP matches what is in cert etc.
-        InsecureSkipVerify: true,
+        InsecureSkipVerify: false,
         // Certificates = list of certs client sends to server.
         // Certificates: []tls.Certificate{cert},
     }
