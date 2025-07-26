@@ -81,7 +81,30 @@ func Login() {
     }
 
     mowingDevice := mammotion.NewMowingDevice(&devices[0], *cg)
+    // TODO this should return err
     mowingDevice.ConnectAsync()
+
+    // Filter devices that start with "Luba"
+    var devicesList []mammotion.MammotionBaseCloudDevice
+    for _, device := range devices {
+        if strings.HasPrefix(device.DeviceName, "Luba") {
+            dev := mammotion.NewMammotionBaseCloudDevice(
+                cg,
+                device,
+                data.NewStateManager(mammotion.NewMowingDevice(&device, *cg)),
+            )
+            devicesList = append(devicesList, *dev)
+        }
+    }
+
+    // Queue command to move forward with a value between 0 and 10
+    if len(devicesList) > 0 {
+        err = devicesList[0].QueueCommand("move_forward", map[string]interface{}{"linear": 10})
+        if err != nil {
+            fmt.Println("Error queuing command:", err)
+            return
+        }
+    }
 }
 
 var rootCmd = &cobra.Command{

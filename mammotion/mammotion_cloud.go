@@ -194,3 +194,6 @@ func NewMammotionFuture(iotID string) *MammotionFuture {
 func (mf *MammotionFuture) Resolve(result []byte) {
 	mf.Result <- result
 }
+
+
+
