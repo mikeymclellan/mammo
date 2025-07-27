@@ -48,36 +48,9 @@ func NewMammotionMQTT(regionID, productKey, deviceName, deviceSecret, iotToken s
 	}
 
     regionID = "cn-shanghai"
-    opts := mqtt.NewClientOptions()
-    opts.AddBroker(fmt.Sprintf("tls://%s.iot-as-mqtt.%s.aliyuncs.com:1883", productKey, regionID))
     auth := calculate_sign(clientID, productKey, deviceName, deviceSecret)
-    opts.SetClientID(auth.mqttClientId)
-    opts.SetUsername(auth.username)
-    opts.SetPassword(auth.password)
-    opts.SetKeepAlive(60 * 2 * time.Second)
-    opts.SetDefaultPublishHandler(f)
-
-    /*
-    fmt.Println("MQTT Client Options:")
-    fmt.Println("  Broker:", opts.Servers)
-    fmt.Println("  Client ID:", opts.ClientID)
-    fmt.Println("  Username:", opts.Username)
-    fmt.Println("  Password:", opts.Password)
-    fmt.Println("  Protocol Version:", opts.ProtocolVersion)
-    fmt.Println("  clientID:", clientID)
-    fmt.Println("  productKey:", productKey)
-    fmt.Println("  deviceName:", deviceName)
-    fmt.Println("  deviceSecret:", deviceSecret)
-    */
-    tlsconfig := NewTLSConfig()
-    opts.SetTLSConfig(tlsconfig)
-
-    mqtt.ERROR = log.New(os.Stdout, "[ERROR] ", 0)
-	mqtt.CRITICAL = log.New(os.Stdout, "[CRIT] ", 0)
-	mqtt.WARN = log.New(os.Stdout, "[WARN]  ", 0)
-	mqtt.DEBUG = log.New(os.Stdout, "[DEBUG] ", 0)
-
-	return &MammotionMQTT{
+    
+    m := &MammotionMQTT{
 		RegionID:     regionID,
 		ProductKey:   productKey,
 		DeviceName:   deviceName,
@@ -88,8 +61,29 @@ func NewMammotionMQTT(regionID, productKey, deviceName, deviceSecret, iotToken s
 		MQTTClientID: auth.mqttClientId,
 		MQTTUsername: auth.username,
 		MQTTPassword: auth.password,
-		MQTTClient:   mqtt.NewClient(opts),
 	}
+
+    opts := mqtt.NewClientOptions()
+    opts.AddBroker(fmt.Sprintf("tls://%s.iot-as-mqtt.%s.aliyuncs.com:1883", productKey, regionID))
+    opts.SetClientID(auth.mqttClientId)
+    opts.SetUsername(auth.username)
+    opts.SetPassword(auth.password)
+    opts.SetKeepAlive(60 * 2 * time.Second)
+    opts.SetDefaultPublishHandler(m.OnMessageReceived)
+    opts.SetOnConnectHandler(m.OnConnect)
+    opts.SetConnectionLostHandler(m.OnDisconnect)
+
+    tlsconfig := NewTLSConfig()
+    opts.SetTLSConfig(tlsconfig)
+
+    m.MQTTClient = mqtt.NewClient(opts)
+
+    mqtt.ERROR = log.New(os.Stdout, "[ERROR] ", 0)
+	mqtt.CRITICAL = log.New(os.Stdout, "[CRIT] ", 0)
+	mqtt.WARN = log.New(os.Stdout, "[WARN]  ", 0)
+	mqtt.DEBUG = log.New(os.Stdout, "[DEBUG] ", 0)
+
+	return m
 }
 
 func (m *MammotionMQTT) ConnectAsync() {
@@ -98,7 +92,7 @@ func (m *MammotionMQTT) ConnectAsync() {
         return
     }
 	log.Println("Connecting...")
-	if token := m.MQTTClient.Connect(); token.Wait() && token.Error() != nil {
+	if token := m.MQTTClient.Connect(); token.WaitTimeout(10*time.Second) && token.Error() != nil {
         log.Fatal(fmt.Sprintf("Connection error: %s", token.Error()))
 	}
     println("MQTT Connected")
@@ -110,9 +104,10 @@ func (m *MammotionMQTT) Disconnect() {
 }
 
 func (m *MammotionMQTT) Subscribe(topic string, qos byte, callback mqtt.MessageHandler) {
-	if token := m.MQTTClient.Subscribe(topic, qos, callback); token.Wait() && token.Error() != nil {
+	if token := m.MQTTClient.Subscribe(topic, qos, callback); token.WaitTimeout(10*time.Second) && token.Error() != nil {
 		log.Fatal(token.Error())
 	}
+	log.Printf("Subscribed to %s", topic)
 }
 
 func (m *MammotionMQTT) Publish(topic string, payload interface{}) {
@@ -125,9 +120,30 @@ func (m *MammotionMQTT) Publish(topic string, payload interface{}) {
 	}
 }
 
-func (m *MammotionMQTT) OnThingEnable(client mqtt.Client, msg mqtt.Message) {
-	log.Println("Thing enabled")
+func (m *MammotionMQTT) OnMessageReceived(client mqtt.Client, msg mqtt.Message) {
+	log.Printf("Message received on topic %s: %s", msg.Topic(), string(msg.Payload()))
+	var payload map[string]interface{}
+	if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
+		log.Println("Error unmarshalling payload:", err)
+		return
+	}
+	iotID := ""
+	if params, ok := payload["params"].(map[string]interface{}); ok {
+		if id, ok := params["iotId"].(string); ok {
+			iotID = id
+		}
+	}
+	if m.OnMessage != nil {
+		m.OnMessage(msg.Topic(), msg.Payload(), iotID)
+	}
+}
+
+func (m *MammotionMQTT) OnConnect(client mqtt.Client) {
 	m.IsConnected = true
+	if m.OnConnected != nil {
+		m.OnConnected()
+	}
+	log.Println("Connected")
 	m.Subscribe(fmt.Sprintf("/sys/%s/%s/app/down/account/bind_reply", m.ProductKey, m.DeviceName), 0, m.OnMessageReceived)
 	m.Subscribe(fmt.Sprintf("/sys/%s/%s/app/down/thing/event/property/post_reply", m.ProductKey, m.DeviceName), 0, m.OnMessageReceived)
 	m.Subscribe(fmt.Sprintf("/sys/%s/%s/app/down/thing/wifi/status/notify", m.ProductKey, m.DeviceName), 0, m.OnMessageReceived)
@@ -153,27 +169,6 @@ func (m *MammotionMQTT) OnThingEnable(client mqtt.Client, msg mqtt.Message) {
 		m.IsReady = true
 		m.OnReady()
 	}
-}
-
-func (m *MammotionMQTT) OnMessageReceived(client mqtt.Client, msg mqtt.Message) {
-	log.Printf("Message received on topic %s: %s", msg.Topic(), string(msg.Payload()))
-	var payload map[string]interface{}
-	if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
-		log.Println("Error unmarshalling payload:", err)
-		return
-	}
-	iotID := payload["params"].(map[string]interface{})["iotId"].(string)
-	if iotID != "" && m.OnMessage != nil {
-		m.OnMessage(msg.Topic(), msg.Payload(), iotID)
-	}
-}
-
-func (m *MammotionMQTT) OnConnect(client mqtt.Client) {
-	m.IsConnected = true
-	if m.OnConnected != nil {
-		m.OnConnected()
-	}
-	log.Println("Connected")
 }
 
 func (m *MammotionMQTT) OnDisconnect(client mqtt.Client, err error) {

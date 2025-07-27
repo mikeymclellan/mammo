@@ -56,10 +56,15 @@ func NewMammotionHTTP(response *Response[map[string]interface{}]) *MammotionHTTP
 		"User-Agent":  "okhttp/3.14.9",
 		"App-Version": "google Pixel 2 XL taimen-Android 11,1.11.332",
 	}
+	if response == nil {
+		return &MammotionHTTP{headers: headers}
+	}
 	var loginInfo *LoginResponseData
 	if response.Data != nil {
 		loginInfo = LoginResponseDataFromDict(response.Data)
-		headers["Authorization"] = fmt.Sprintf("Bearer %s", loginInfo.AccessToken)
+		if loginInfo != nil {
+			headers["Authorization"] = fmt.Sprintf("Bearer %s", loginInfo.AccessToken)
+		}
 	}
 	return &MammotionHTTP{
 		headers:   headers,
@@ -82,23 +87,27 @@ func UserInformationFromDict(data map[string]interface{}) *UserInformation {
 }
 
 func LoginResponseDataFromDict(data map[string]interface{}) *LoginResponseData {
+	if data == nil {
+		return nil
+	}
 
-    dataMap, ok := data["data"].(map[string]interface{})
-    if !ok {
-        // Handle the error appropriately, e.g., return nil or an error
-        return nil
-    }
+	dataMap, ok := data["data"].(map[string]interface{})
+	if !ok {
+		return nil
+	}
 
-    var userInfo *UserInformation
-    userInfo = UserInformationFromDict(dataMap["userInformation"].(map[string]interface{}))
+	var userInfo *UserInformation
+	if userInfoData, ok := dataMap["userInformation"].(map[string]interface{}); ok {
+		userInfo = UserInformationFromDict(userInfoData)
+	}
 
-    return &LoginResponseData{
-        AccessToken: dataMap["access_token"].(string),
-        AuthorizationCode: dataMap["authorization_code"].(string),
-        RefreshToken: dataMap["refresh_token"].(string),
-        ExpiresIn: dataMap["expires_in"].(float64),
-        UserInformation: userInfo,
-    }
+	return &LoginResponseData{
+		AccessToken:       dataMap["access_token"].(string),
+		AuthorizationCode: dataMap["authorization_code"].(string),
+		RefreshToken:      dataMap["refresh_token"].(string),
+		ExpiresIn:         dataMap["expires_in"].(float64),
+		UserInformation:   userInfo,
+	}
 }
 
 func ResponseFromDict(data map[string]interface{}) *Response[map[string]interface{}] {
@@ -228,6 +237,10 @@ func Login(client *http.Client, username, password string) (*Response[map[string
 	var data map[string]interface{}
 	if err := json.Unmarshal(body, &data); err != nil {
 		return nil, err
+	}
+
+	if int(data["code"].(float64)) != 0 {
+		return nil, fmt.Errorf("login failed: %s", data["msg"].(string))
 	}
 
 	response := ResponseFromDict(data)

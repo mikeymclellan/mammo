@@ -56,7 +56,6 @@ func NewMammotionCloud(mqttClient *MammotionMQTT, cloudClient *aliyuniot.CloudIO
 }
 
 func (mc *MammotionCloud) onReady() {
-	go mc.processQueue()
 	mc.onReadyEvent.Trigger(nil)
 }
 
@@ -114,7 +113,12 @@ func (mc *MammotionCloud) executeCommandLocked(cmd Command) {
 }
 
 func (mc *MammotionCloud) onMQTTMessage(topic string, payload []byte, iotID string) {
-	log.Printf("MQTT message received on topic %s: %s, iotID: %s", topic, payload, iotID)
+	if mc.waitingQueue.Len() > 0 {
+		fut := mc.DequeueByIotID(iotID)
+		if fut != nil {
+			fut.Resolve(payload)
+		}
+	}
 
 	var payloadMap map[string]interface{}
 	if err := json.Unmarshal(payload, &payloadMap); err != nil {
@@ -122,11 +126,22 @@ func (mc *MammotionCloud) onMQTTMessage(topic string, payload []byte, iotID stri
 		return
 	}
 
+	mc.mqttMessageEvent.Trigger(map[string]interface{}{"topic": topic, "payload": payloadMap})
 	mc.handleMQTTMessage(topic, payloadMap)
 }
 
 func (mc *MammotionCloud) handleMQTTMessage(topic string, payload map[string]interface{}) {
 	mc.parseMQTTResponse(topic, payload)
+}
+
+func (mc *MammotionCloud) DequeueByIotID(iotID string) *MammotionFuture {
+	for e := mc.waitingQueue.Front(); e != nil; e = e.Next() {
+		if e.Value.(*MammotionFuture).IotID == iotID {
+			mc.waitingQueue.Remove(e)
+			return e.Value.(*MammotionFuture)
+		}
+	}
+	return nil
 }
 
 func (mc *MammotionCloud) parseMQTTResponse(topic string, payload map[string]interface{}) {
@@ -147,16 +162,6 @@ func (mc *MammotionCloud) parseMQTTResponse(topic string, payload map[string]int
 			log.Printf("%v", event)
 		}
 	}
-}
-
-func (mc *MammotionCloud) DequeueByIotID(iotID string) *MammotionFuture {
-	for e := mc.waitingQueue.Front(); e != nil; e = e.Next() {
-		if e.Value.(*MammotionFuture).IotID == iotID {
-			mc.waitingQueue.Remove(e)
-			return e.Value.(*MammotionFuture)
-		}
-	}
-	return nil
 }
 
 type DataEvent struct {

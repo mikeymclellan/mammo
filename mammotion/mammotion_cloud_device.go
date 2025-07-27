@@ -1,11 +1,12 @@
 package mammotion
 
 import (
-	"container/list"
 	"encoding/base64"
+	"fmt"
 	"log"
 	"sync"
 	"time"
+
 	mqtt "mammo/data/mqtt"
 )
 
@@ -28,10 +29,10 @@ func NewMammotionBaseCloudDevice(mqtt *MammotionCloud, device *MowingDevice, sta
 		device:         device,
 		stateManager:   stateManager,
 		commandFutures: make(map[string]chan []byte),
-		commands:       NewMammotionCommand(device.DeviceName),
+		commands:       NewMammotionCommand(device.iotDevice.DeviceName),
 	}
 
-	mqtt.mqttMessageEvent.AddSubscriber(mbcd.parseMessageForDevice)
+	device.mqttMessageEvent.AddSubscriber(mbcd.parseMessageForDevice)
 	mqtt.mqttPropertiesEvent.AddSubscriber(mbcd.parseMessagePropertiesForDevice)
 	mqtt.onReadyEvent.AddSubscriber(mbcd.onReady)
 	mqtt.onDisconnectedEvent.AddSubscriber(mbcd.onDisconnect)
@@ -90,7 +91,7 @@ func (mbcd *MammotionBaseCloudDevice) Start() {
 
 func (mbcd *MammotionBaseCloudDevice) bleSync() {
 	commandBytes := mbcd.commands.SendToDevBleSync(3)
-	mbcd.mqtt.SendCommand(mbcd.device.IotID, commandBytes)
+	mbcd.mqtt.SendCommand(mbcd.device.iotDevice.IotId, commandBytes)
 }
 
 func (mbcd *MammotionBaseCloudDevice) runPeriodicSyncTask() {
@@ -114,7 +115,7 @@ func (mbcd *MammotionBaseCloudDevice) QueueCommand(key string, kwargs map[string
 	future := make(chan []byte)
 	commandBytes := mbcd.commands.GetCommandBytes(key, kwargs)
 	mbcd.mqtt.commandQueue <- Command{
-		iotID:   mbcd.device.IotID,
+		iotID:   mbcd.device.iotDevice.IotId,
 		key:     key,
 		command: commandBytes,
 		future:  future,
@@ -128,11 +129,43 @@ func (mbcd *MammotionBaseCloudDevice) QueueCommand(key string, kwargs map[string
 }
 
 func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
-	thingEventMessage := event.(mqtt.ThingEventMessage)
-	if thingEventMessage.Params.IotID != mbcd.device.IotID {
+	thingEventMessage, ok := event.(*mqtt.ThingEventMessage)
+	if !ok {
+		log.Printf("Failed to cast event to *mqtt.ThingEventMessage")
 		return
 	}
-	binaryData, err := base64.StdEncoding.DecodeString(thingEventMessage.Params.Value.Content)
+
+	var iotID, deviceName, productKey string
+	var valueContent string
+
+	switch params := thingEventMessage.Params.(type) {
+	case mqtt.DeviceProtobufMsgEventParams:
+		iotID = params.IotId
+		deviceName = params.DeviceName
+		productKey = params.ProductKey
+		valueContent = params.Value.Content
+	default:
+		// try to get general params
+		if generalParams, ok := thingEventMessage.Params.(mqtt.GeneralParams); ok {
+			iotID = generalParams.IotId
+			deviceName = generalParams.DeviceName
+			productKey = generalParams.ProductKey
+			if val, ok := generalParams.Value.(map[string]interface{}); ok {
+				if content, ok := val["content"].(string); ok {
+					valueContent = content
+				}
+			}
+		} else {
+			log.Printf("Unknown event params type: %T", thingEventMessage.Params)
+			return
+		}
+	}
+
+	if iotID != mbcd.device.iotDevice.IotId {
+		return
+	}
+
+	binaryData, err := base64.StdEncoding.DecodeString(valueContent)
 	if err != nil {
 		log.Printf("Error decoding message: %v", err)
 		return
@@ -144,38 +177,30 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 		log.Printf("Error parsing message: %v", err)
 		return
 	}
-	if mbcd.commands.GetDeviceProductKey() == "" && mbcd.commands.GetDeviceName() == thingEventMessage.Params.DeviceName {
-		mbcd.commands.SetDeviceProductKey(thingEventMessage.Params.ProductKey)
+	if mbcd.commands.GetDeviceProductKey() == "" && mbcd.commands.GetDeviceName() == deviceName {
+		mbcd.commands.SetDeviceProductKey(productKey)
 	}
-	if len(mbcd.mqtt.waitingQueue) > 0 {
-		fut := mbcd.dequeueByIotID(mbcd.mqtt.waitingQueue, mbcd.device.IotID)
-		if fut == nil {
-			return
-		}
-		for fut.future == nil && len(mbcd.mqtt.waitingQueue) > 0 {
-			fut = mbcd.dequeueByIotID(mbcd.mqtt.waitingQueue, mbcd.device.IotID)
-		}
-		if fut.future != nil {
+	if mbcd.mqtt.waitingQueue.Len() > 0 {
+		fut := mbcd.mqtt.DequeueByIotID(mbcd.device.iotDevice.IotId)
+		if fut != nil {
 			fut.Resolve(binaryData)
 		}
 	}
-	mbcd.stateManager.Notification(newMsg)
+	mbcd.stateManager.Notification(&newMsg)
 }
 
 func (mbcd *MammotionBaseCloudDevice) parseMessagePropertiesForDevice(event interface{}) {
-	thingPropertiesMessage := event.(mqtt.ThingPropertiesMessage)
-	if thingPropertiesMessage.Params.IotID != mbcd.device.IotID {
+	thingPropertiesMessage, ok := event.(*mqtt.ThingPropertiesMessage)
+	if !ok {
+		log.Printf("Failed to cast event to *mqtt.ThingPropertiesMessage")
+		return
+	}
+	if thingPropertiesMessage.Params.IotID != mbcd.device.iotDevice.IotId {
 		return
 	}
 	mbcd.stateManager.Properties(thingPropertiesMessage)
 }
 
-func (mbcd *MammotionBaseCloudDevice) dequeueByIotID(queue *list.List, iotID string) *MammotionFuture {
-	for e := queue.Front(); e != nil; e = e.Next() {
-		if e.Value.(*MammotionFuture).IotID == iotID {
-			queue.Remove(e)
-			return e.Value.(*MammotionFuture)
-		}
-	}
-	return nil
+func (mbcd *MammotionBaseCloudDevice) updateRawData(data []byte) {
+	// Implement this method
 }

@@ -365,6 +365,58 @@ func (cg *CloudIOTGateway) SessionByAuthCode() error {
 	return nil
 }
 
+func (cg *CloudIOTGateway) CheckOrRefreshSession() error {
+	config := new(iot.Config).
+		SetAppKey(cg.AppKey).
+		SetAppSecret(cg.AppSecret).
+		SetDomain(cg.RegionResponse.Data.ApiGatewayEndpoint)
+
+	client, err := iot.NewClient(config)
+	if err != nil {
+		panic(err)
+	}
+
+	params := map[string]interface{}{
+		"request": map[string]string{
+			"refreshToken": cg.SessionByAuthCodeResponse.Data.RefreshToken,
+			"identityId":   cg.SessionByAuthCodeResponse.Data.IdentityId,
+		},
+	}
+
+	request := new(iot.CommonParams).
+		SetApiVer("1.0.4").SetLanguage("en-US")
+
+	body := new(iot.IoTApiRequest).
+		SetId(uuid.New().String()).
+		SetParams(params).
+		SetRequest(request).
+		SetVersion("1.0")
+
+	runtime := new(util.RuntimeOptions)
+	response, err := client.DoRequest(tea.String("/account/checkOrRefreshSession"), tea.String("HTTPS"), tea.String("POST"), nil, body, runtime)
+
+	responseBody, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return err
+	}
+	var responseBodyDict map[string]interface{}
+	if err := json.Unmarshal(responseBody, &responseBodyDict); err != nil {
+		return err
+	}
+
+	if code, ok := responseBodyDict["code"].(float64); !ok || int(code) != 200 {
+		return fmt.Errorf("error checkOrRefreshSession : %v", responseBodyDict["msg"])
+	}
+
+	var sessionResponse SessionByAuthCodeResponse
+	if err := json.Unmarshal(responseBody, &sessionResponse); err != nil {
+		return err
+	}
+
+	cg.SessionByAuthCodeResponse = &sessionResponse
+	return nil
+}
+
 func (cg *CloudIOTGateway) ListDevices() ([]Device, error) {
 
     config := new(iot.Config).
