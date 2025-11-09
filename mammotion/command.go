@@ -112,3 +112,44 @@ func GetReportCfg(timeout int32, period int32, noChangePeriod int32) ([]byte, er
 	// Serialize to bytes
 	return proto.Marshal(lubaMsg)
 }
+
+// SendMotionControl sends a motion control command to the mower
+// linearSpeed: forward/backward speed in mm/s (positive = forward, negative = backward)
+// angularSpeed: rotation speed in degrees/s (positive = counterclockwise, negative = clockwise)
+func SendMotionControl(linearSpeed int32, angularSpeed int32) ([]byte, error) {
+	// Create the motion control message
+	motionCtrl := &pb.DrvMotionCtrl{
+		SetLinearSpeed:  linearSpeed,
+		SetAngularSpeed: angularSpeed,
+	}
+
+	// Create the MctlDriver message
+	mctlDriver := &pb.MctlDriver{
+		SubDrvMsg: &pb.MctlDriver_TodevDevmotionCtrl{
+			TodevDevmotionCtrl: motionCtrl,
+		},
+	}
+
+	// Create the LubaMsg wrapper
+	lubaMsg := &pb.LubaMsg{
+		Msgtype:   pb.MsgCmdType_MSG_CMD_TYPE_EMBED_DRIVER,
+		Sender:    pb.MsgDevice_DEV_MOBILEAPP,
+		Rcver:     pb.MsgDevice_DEV_MAINCTL,
+		Msgattr:   pb.MsgAttr_MSG_ATTR_REQ,
+		Seqs:      1,
+		Version:   1,
+		Subtype:   1,
+		Timestamp: uint64(time.Now().UnixMilli()),
+		LubaSubMsg: &pb.LubaMsg_Driver{
+			Driver: mctlDriver,
+		},
+	}
+
+	// Serialize to bytes
+	return proto.Marshal(lubaMsg)
+}
+
+// StopMotion sends a command to stop all motion
+func StopMotion() ([]byte, error) {
+	return SendMotionControl(0, 0)
+}

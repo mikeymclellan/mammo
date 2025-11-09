@@ -337,12 +337,34 @@ var dockCmd = &cobra.Command{
 	},
 }
 
+var interactiveCmd = &cobra.Command{
+	Use:   "interactive",
+	Short: "Control the mower interactively with arrow keys",
+	Long: `Interactive mode allows you to control the mower in real-time using keyboard controls.
+
+Controls:
+  Arrow Keys / WASD - Move forward, backward, turn left/right
+  Space            - Stop all movement
+  +/-              - Adjust movement distance
+  Q                - Quit
+
+The interface shows real-time position, battery level, and status.`,
+	Run: func(cmd *cobra.Command, args []string) {
+		err := runInteractive()
+		if err != nil {
+			fmt.Printf("Error: %v\n", err)
+			os.Exit(1)
+		}
+	},
+}
+
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	rootCmd.AddCommand(batteryCmd)
 	rootCmd.AddCommand(loginCmd)
 	rootCmd.AddCommand(dockCmd)
+	rootCmd.AddCommand(interactiveCmd)
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)

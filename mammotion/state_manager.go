@@ -14,7 +14,8 @@ type StateManager struct {
 	GetCommonDataAckCallback func(interface{})
 	OnNotificationCallback func(string, interface{})
 	QueueCommandCallback   func(string, map[string]interface{}) ([]byte, error)
-	OnPropertiesReceived   func() // New callback
+	OnPropertiesReceived   func() // Battery/properties callback
+	OnPositionUpdate       func(x, y float32, angle int32) // Position callback
 	mu                     sync.Mutex
 }
 

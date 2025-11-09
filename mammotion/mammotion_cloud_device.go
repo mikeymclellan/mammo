@@ -182,12 +182,26 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 		return
 	}
 
-	// Extract battery data from system messages
+	// Extract battery data and position from system messages
 	if sys := lubaMsg.GetSys(); sys != nil {
 		if reportData := sys.GetToappReportData(); reportData != nil {
+			// Extract battery level
 			if devStatus := reportData.GetDev(); devStatus != nil {
 				batteryLevel := devStatus.GetBatteryVal()
 				mbcd.stateManager.UpdateBatteryFromProtobuf(batteryLevel)
+			}
+
+			// Extract position data
+			if locations := reportData.GetLocations(); len(locations) > 0 {
+				// Use the first location (most recent)
+				loc := locations[0]
+				x := float32(loc.GetRealPosX())
+				y := float32(loc.GetRealPosY())
+				angle := loc.GetRealToward()
+
+				if mbcd.stateManager.OnPositionUpdate != nil {
+					mbcd.stateManager.OnPositionUpdate(x, y, angle)
+				}
 			}
 		}
 	}
