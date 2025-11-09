@@ -1,7 +1,6 @@
 package mammotion
 
 import (
-	"log"
 	"sync"
 
 	aliyuniot "mammo/aliyuniot"
@@ -70,7 +69,7 @@ func (d *MowingDevice) onDisconnected() {
 func (d *MowingDevice) onMQTTMessage(data interface{}) {
 	event, ok := data.(*mqtt.ThingEventMessage)
 	if !ok {
-		log.Printf("Error: invalid event type")
+		// Not a ThingEventMessage, ignoring
 		return
 	}
 	d.mqttMessageEvent.Trigger(event)

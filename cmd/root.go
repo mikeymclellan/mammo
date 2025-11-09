@@ -283,14 +283,41 @@ var batteryCmd = &cobra.Command{
 			close(propertiesReceived)
 		}
 
-		fmt.Println("Waiting for device properties...")
+		// Send commands to trigger device reporting
+		bleSyncData, err := mammotion.SendTodevBleSync(3)
+		if err != nil {
+			fmt.Printf("Error creating ble_sync command: %v\n", err)
+			return
+		}
+		_, err = cg.SendCloudCommand(firstDevice.IotId, bleSyncData)
+		if err != nil {
+			fmt.Printf("Error sending ble_sync command: %v\n", err)
+			return
+		}
+
+		reportCfgData, err := mammotion.GetReportCfg(10000, 1000, 2000)
+		if err != nil {
+			fmt.Printf("Error creating get_report_cfg command: %v\n", err)
+			return
+		}
+		_, err = cg.SendCloudCommand(firstDevice.IotId, reportCfgData)
+		if err != nil {
+			fmt.Printf("Error sending get_report_cfg command: %v\n", err)
+			return
+		}
+
+		// Wait a moment for commands to be processed
+		time.Sleep(2 * time.Second)
 
 		select {
 		case <-propertiesReceived:
 			fmt.Printf("Battery Level: %d%%\n", mowingDevice.BatteryPercentage)
-		case <-time.After(30 * time.Second):
+		case <-time.After(10 * time.Second):
 			fmt.Println("Timed out waiting for device properties.")
 		}
+
+		// Disconnect cleanly
+		mqttClient.Disconnect()
 	},
 }
 

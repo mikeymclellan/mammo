@@ -12,7 +12,6 @@ import (
 	"log"
 	"mammo/aliyuniot"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -69,13 +68,7 @@ func NewMammotionMQTT(regionID, productKey, deviceName, deviceSecret, iotToken s
     opts := mqtt.NewClientOptions()
     // Now use the actual region since we have the correct ProductKey
     brokerURL := fmt.Sprintf("tls://%s.iot-as-mqtt.%s.aliyuncs.com:8883", productKey, regionID)
-    log.Printf("MQTT Broker URL: %s", brokerURL)
-    log.Printf("Using MQTT 3.1.1 protocol on port 8883")
-    log.Printf("Region ID: %s", regionID)
-    log.Printf("Product Key: %s", productKey)
-    log.Printf("MQTT ClientID: %s", auth.mqttClientId)
-    log.Printf("MQTT Username: %s", auth.username)
-    log.Printf("MQTT Password (first 20 chars): %s...", auth.password[:20])
+    // Connection details (logging disabled for cleaner output)
     opts.AddBroker(brokerURL)
     opts.SetClientID(auth.mqttClientId)
     opts.SetUsername(auth.username)
@@ -107,16 +100,15 @@ func (m *MammotionMQTT) ConnectAsync() {
     if (m.MQTTClient.IsConnected()) {
         return
     }
-	log.Println("Connecting to MQTT broker...")
+	// Connecting to MQTT broker...
 	token := m.MQTTClient.Connect()
-	log.Println("Waiting for connection to complete...")
 	if !token.WaitTimeout(30*time.Second) {
 		log.Fatal("Connection timeout after 30 seconds")
 	}
 	if token.Error() != nil {
         log.Fatal(fmt.Sprintf("Connection error: %s", token.Error()))
 	}
-    log.Println("MQTT connection completed successfully")
+    // MQTT connection completed successfully
 }
 
 func (m *MammotionMQTT) Disconnect() {
@@ -128,7 +120,7 @@ func (m *MammotionMQTT) Subscribe(topic string, qos byte, callback mqtt.MessageH
 	if token := m.MQTTClient.Subscribe(topic, qos, callback); token.WaitTimeout(10*time.Second) && token.Error() != nil {
 		log.Fatal(token.Error())
 	}
-	log.Printf("Subscribed to %s", topic)
+	// Subscription successful (logging disabled for cleaner output)
 }
 
 func (m *MammotionMQTT) Publish(topic string, payload interface{}) {
@@ -143,10 +135,6 @@ func (m *MammotionMQTT) Publish(topic string, payload interface{}) {
 	// Remove trailing newline added by Encode
 	data := bytes.TrimSpace(buffer.Bytes())
 
-	// Log the payload for account bind messages
-	if strings.Contains(topic, "account/bind") {
-		log.Printf("Account bind payload: %s", string(data))
-	}
 	if token := m.MQTTClient.Publish(topic, 0, false, data); token.Wait() && token.Error() != nil {
 		log.Fatal(token.Error())
 	}
@@ -200,49 +188,24 @@ func (m *MammotionMQTT) BindDevice(productKey, deviceName string) error {
 }
 
 func (m *MammotionMQTT) OnMessageReceived(client mqtt.Client, msg mqtt.Message) {
-	log.Printf("🔔 === MQTT Message Received ===")
-	log.Printf("📨 Topic: %s", msg.Topic())
-	log.Printf("📦 Payload Length: %d bytes", len(msg.Payload()))
-
-	// Log full payload for debugging
-	payloadStr := string(msg.Payload())
-	if len(payloadStr) > 1000 {
-		log.Printf("📄 Payload (first 1000 chars): %s...", payloadStr[:1000])
-	} else {
-		log.Printf("📄 Full Payload: %s", payloadStr)
-	}
-	log.Printf("=============================")
-
+	// Parse the message
 	var payload map[string]interface{}
 	if err := json.Unmarshal(msg.Payload(), &payload); err != nil {
-		log.Println("⚠️  Error unmarshalling payload:", err)
-		log.Println("Raw payload:", payloadStr)
+		log.Println("Error unmarshalling payload:", err)
 		return
 	}
 
-	// Log the method if it exists
-	if method, ok := payload["method"].(string); ok {
-		log.Printf("🔧 Message method: %s", method)
-	}
-
+	// Extract iotID if present
 	iotID := ""
 	if params, ok := payload["params"].(map[string]interface{}); ok {
 		if id, ok := params["iotId"].(string); ok {
 			iotID = id
-			log.Printf("🤖 Device iotId: %s", iotID)
-		}
-		// Also log the identifier if it exists
-		if identifier, ok := params["identifier"].(string); ok {
-			log.Printf("🏷️  Identifier: %s", identifier)
 		}
 	}
 
-	log.Printf("🎯 Calling OnMessage handler (is nil: %v)", m.OnMessage == nil)
+	// Call the message handler
 	if m.OnMessage != nil {
 		m.OnMessage(msg.Topic(), msg.Payload(), iotID)
-		log.Printf("✅ OnMessage handler completed")
-	} else {
-		log.Println("⚠️  OnMessage handler is nil!")
 	}
 }
 
@@ -251,7 +214,6 @@ func (m *MammotionMQTT) OnConnect(client mqtt.Client) {
 	if m.OnConnected != nil {
 		m.OnConnected()
 	}
-	log.Println("Connected")
 	// Use DeviceName in topics, not ClientID
 	m.Subscribe(fmt.Sprintf("/sys/%s/%s/app/down/account/bind_reply", m.ProductKey, m.DeviceName), 0, m.OnMessageReceived)
 	m.Subscribe(fmt.Sprintf("/sys/%s/%s/app/down/thing/event/property/post_reply", m.ProductKey, m.DeviceName), 0, m.OnMessageReceived)
@@ -265,8 +227,6 @@ func (m *MammotionMQTT) OnConnect(client mqtt.Client) {
 
 	// Account bind - matching Python exactly
 	bindClientId := fmt.Sprintf("%s&%s", m.DeviceName, m.ProductKey)
-	log.Printf("Sending account bind with clientId: %s", bindClientId)
-	log.Printf("IotToken (first 20 chars): %s... (length: %d)", m.IotToken[:20], len(m.IotToken))
 	m.Publish(fmt.Sprintf("/sys/%s/%s/app/up/account/bind", m.ProductKey, m.DeviceName), map[string]interface{}{
 		"id":      "msgid1",
 		"version": "1.0",
@@ -277,7 +237,6 @@ func (m *MammotionMQTT) OnConnect(client mqtt.Client) {
 			"iotToken": m.IotToken,
 		},
 	})
-	log.Println("MQTT subscriptions and account bind complete")
 
 	if m.OnReady != nil {
 		m.IsReady = true
