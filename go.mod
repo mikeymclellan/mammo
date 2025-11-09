@@ -1,6 +1,6 @@
 module mammo
 
-go 1.22.5
+go 1.23
 
 require (
 	github.com/alibabacloud-go/alibabacloud-gateway-spi v0.0.5 // indirect
@@ -30,5 +30,6 @@ require (
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	golang.org/x/net v0.27.0 // indirect
 	golang.org/x/sync v0.7.0 // indirect
+	google.golang.org/protobuf v1.36.10 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )

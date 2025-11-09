@@ -1,5 +1,12 @@
 package mammotion
 
+import (
+	"time"
+
+	pb "mammo/proto"
+	"google.golang.org/protobuf/proto"
+)
+
 type MammotionCommand struct {
 	deviceName string
 	productKey string
@@ -10,8 +17,8 @@ func NewMammotionCommand(deviceName string) *MammotionCommand {
 }
 
 func (c *MammotionCommand) SendToDevBleSync(value int) []byte {
-	// Placeholder implementation
-	return []byte{}
+	data, _ := SendTodevBleSync(int32(value))
+	return data
 }
 
 func (c *MammotionCommand) GetCommandBytes(key string, kwargs map[string]interface{}) []byte {
@@ -29,4 +36,79 @@ func (c *MammotionCommand) GetDeviceName() string {
 
 func (c *MammotionCommand) SetDeviceProductKey(key string) {
 	c.productKey = key
+}
+
+// SendTodevBleSync creates a protobuf message to sync with device via BLE
+// This command triggers the device to start reporting status
+func SendTodevBleSync(syncType int32) ([]byte, error) {
+	// Create the DevNet message with ble_sync
+	devNet := &pb.DevNet{
+		NetSubType: &pb.DevNet_TodevBleSync{
+			TodevBleSync: syncType,
+		},
+	}
+
+	// Create the LubaMsg wrapper
+	lubaMsg := &pb.LubaMsg{
+		Msgtype:    pb.MsgCmdType_MSG_CMD_TYPE_ESP,
+		Sender:     pb.MsgDevice_DEV_MOBILEAPP,
+		Rcver:      pb.MsgDevice_DEV_COMM_ESP,
+		Msgattr:    pb.MsgAttr_MSG_ATTR_REQ,
+		Seqs:       1,
+		Version:    1,
+		Subtype:    1,
+		Timestamp:  uint64(time.Now().UnixMilli()),
+		LubaSubMsg: &pb.LubaMsg_Net{
+			Net: devNet,
+		},
+	}
+
+	// Serialize to bytes
+	return proto.Marshal(lubaMsg)
+}
+
+// GetReportCfg creates a protobuf message to request device reporting
+func GetReportCfg(timeout int32, period int32, noChangePeriod int32) ([]byte, error) {
+	// Create the report configuration
+	reportCfg := &pb.ReportInfoCfg{
+		Act:            pb.RptAct_RPT_START,
+		Timeout:        timeout,
+		Period:         period,
+		NoChangePeriod: noChangePeriod,
+		Count:          1,
+		Sub: []pb.RptInfoType{
+			pb.RptInfoType_RIT_CONNECT,
+			pb.RptInfoType_RIT_RTK,
+			pb.RptInfoType_RIT_DEV_LOCAL,
+			pb.RptInfoType_RIT_WORK,
+			pb.RptInfoType_RIT_DEV_STA,
+			pb.RptInfoType_RIT_FW_INFO,
+			pb.RptInfoType_RIT_MAINTAIN,
+		},
+	}
+
+	// Create the MctlSys message
+	mctlSys := &pb.MctlSys{
+		SubSysMsg: &pb.MctlSys_TodevReportCfg{
+			TodevReportCfg: reportCfg,
+		},
+	}
+
+	// Create the LubaMsg wrapper
+	lubaMsg := &pb.LubaMsg{
+		Msgtype:   pb.MsgCmdType_MSG_CMD_TYPE_EMBED_SYS,
+		Sender:    pb.MsgDevice_DEV_MOBILEAPP,
+		Rcver:     pb.MsgDevice_DEV_MAINCTL,
+		Msgattr:   pb.MsgAttr_MSG_ATTR_REQ,
+		Seqs:      1,
+		Version:   1,
+		Subtype:   1,
+		Timestamp: uint64(time.Now().UnixMilli()),
+		LubaSubMsg: &pb.LubaMsg_Sys{
+			Sys: mctlSys,
+		},
+	}
+
+	// Serialize to bytes
+	return proto.Marshal(lubaMsg)
 }

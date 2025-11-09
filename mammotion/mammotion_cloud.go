@@ -2,13 +2,17 @@ package mammotion
 
 import (
 	"container/list"
+	"encoding/base64"
 	"encoding/json"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
-    aliyuniot "mammo/aliyuniot"
-    mqtt "mammo/data/mqtt"
+	aliyuniot "mammo/aliyuniot"
+	mqtt "mammo/data/mqtt"
+	pb "mammo/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 type MammotionCloud struct {
@@ -145,22 +149,98 @@ func (mc *MammotionCloud) DequeueByIotID(iotID string) *MammotionFuture {
 }
 
 func (mc *MammotionCloud) parseMQTTResponse(topic string, payload map[string]interface{}) {
-	if topic == "/app/down/thing/events" {
-		log.Printf("Thing event received")
-		event, err := mqtt.FromMap(payload)
+	if strings.HasSuffix(topic, "/app/down/thing/events") {
+		log.Printf("Thing event received on topic: %s", topic)
 
-        if err != nil {
-            log.Printf("Error parsing MQTT response: %v", err)
-            return
-        }
-		if event.Type == "device_protobuf_msg_event" && event.Method == "thing.events" {
-			log.Printf("Protobuf event")
-			mc.mqttMessageEvent.Trigger(event)
+		// Check the method first to determine how to parse
+		method, ok := payload["method"].(string)
+		if !ok {
+			log.Printf("No method field in payload")
+			return
 		}
-		if event.Method == "thing.properties" {
-			mc.mqttPropertiesEvent.Trigger(event)
-			log.Printf("%v", event)
+
+		if method == "thing.properties" {
+			// Parse as properties message directly
+			var propMsg mqtt.ThingPropertiesMessage
+			payloadBytes, err := json.Marshal(payload)
+			if err != nil {
+				log.Printf("Error marshalling properties payload: %v", err)
+				return
+			}
+			err = json.Unmarshal(payloadBytes, &propMsg)
+			if err != nil {
+				log.Printf("Error parsing properties message: %v", err)
+				return
+			}
+			log.Printf("Properties received for device: %s, battery: %v%%", propMsg.Params.IotID, propMsg.Params.Items.BatteryPercentage.Value)
+			mc.mqttPropertiesEvent.Trigger(&propMsg)
+		} else if method == "thing.events" {
+			// Parse as event message - contains protobuf data
+			log.Printf("Thing events message received")
+
+			// Extract params.identifier to check if it's a protobuf event
+			if params, ok := payload["params"].(map[string]interface{}); ok {
+				if identifier, ok := params["identifier"].(string); ok && identifier == "device_protobuf_msg_event" {
+					log.Printf("Protobuf event detected!")
+
+					// Extract the base64-encoded protobuf data from params.value.content
+					if value, ok := params["value"].(map[string]interface{}); ok {
+						if content, ok := value["content"].(string); ok {
+							log.Printf("Encoded protobuf content (first 50 chars): %s", content[:min(50, len(content))])
+							// Decode base64
+							decodedData, err := base64.StdEncoding.DecodeString(content)
+							if err != nil {
+								log.Printf("Error decoding base64 protobuf: %v", err)
+								return
+							}
+
+							// Parse the protobuf LubaMsg
+							var lubaMsg pb.LubaMsg
+							err = proto.Unmarshal(decodedData, &lubaMsg)
+							if err != nil {
+								log.Printf("Error unmarshalling protobuf: %v", err)
+								return
+							}
+
+							log.Printf("Successfully parsed LubaMsg! MsgType: %v", lubaMsg.Msgtype)
+
+							// Check if this is a system message with battery data
+							if sysMsg := lubaMsg.GetSys(); sysMsg != nil {
+								log.Printf("System message received!")
+								if reportData := sysMsg.GetToappReportData(); reportData != nil {
+									log.Printf("Report data received!")
+									if devStatus := reportData.GetDev(); devStatus != nil {
+										batteryLevel := devStatus.GetBatteryVal()
+										log.Printf("🔋 BATTERY LEVEL: %d%%", batteryLevel)
+										// Trigger event with battery data
+										mc.mqttMessageEvent.Trigger(map[string]interface{}{
+											"battery": batteryLevel,
+											"device_status": devStatus,
+										})
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
+	} else if strings.HasSuffix(topic, "/app/down/thing/properties") {
+		// Properties might also come on this topic
+		log.Printf("Properties message received on topic: %s", topic)
+		var propMsg mqtt.ThingPropertiesMessage
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			log.Printf("Error marshalling properties payload: %v", err)
+			return
+		}
+		err = json.Unmarshal(payloadBytes, &propMsg)
+		if err != nil {
+			log.Printf("Error parsing properties message: %v", err)
+			return
+		}
+		log.Printf("Properties received for device: %s, battery: %v%%", propMsg.Params.IotID, propMsg.Params.Items.BatteryPercentage.Value)
+		mc.mqttPropertiesEvent.Trigger(&propMsg)
 	}
 }
 

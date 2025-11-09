@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -199,26 +200,67 @@ type IoTApiRequest struct {
 }
 
 func NewCloudIOTGateway() *CloudIOTGateway {
+	clientId := generateHardwareString(8)   // Python uses 8 characters
+	deviceSn := generateHardwareString(32)  // Python uses 32 characters
+	utdid := generateHardwareString(32)  // Python uses 32 characters
+
 	return &CloudIOTGateway{
 		AppKey:    APP_KEY,
 		AppSecret: APP_SECRET,
 		Domain:    ALIYUN_DOMAIN,
-		ClientID:  generateHardwareString(4),
-		DeviceSN:  generateHardwareString(12),
-		Utdid:     generateHardwareString(24),
+		ClientID:  clientId,
+		DeviceSN:  deviceSn,
+		Utdid:     utdid,
 	}
 }
 
 func generateHardwareString(length int) string {
-    hashedUUID := sha256.New()
-    hashedUUID.Write([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
-    hash := hashedUUID.Sum(nil)
-    
-    if length > len(hash) {
-        length = len(hash)
+    // Generate consistent hardware string based on MAC address like Python
+    // Python: hashlib.sha1(f"{uuid.getnode()}".encode()).hexdigest()
+    interfaces, err := net.Interfaces()
+    if err != nil {
+        // Silently handle error
+        interfaces = []net.Interface{}
     }
-    
-    return fmt.Sprintf("%x", hash[:length])
+
+    var macAddr net.HardwareAddr
+    for _, iface := range interfaces {
+        if iface.HardwareAddr != nil && len(iface.HardwareAddr) > 0 {
+            // Skip loopback and other virtual interfaces
+            if iface.Flags&net.FlagLoopback == 0 {
+                macAddr = iface.HardwareAddr
+                break
+            }
+        }
+    }
+
+    if macAddr == nil {
+        macAddr, _ = net.ParseMAC("00:00:00:00:00:00")
+    }
+
+    // Python's uuid.getnode() returns MAC as a 48-bit integer
+    // Convert MAC to decimal integer like Python does
+    var macInt uint64 = 0
+    for i, b := range macAddr {
+        macInt |= uint64(b) << uint(8*(5-i))
+    }
+
+    // Python hashes the decimal string representation of the MAC integer
+    macDecimalStr := fmt.Sprintf("%d", macInt)
+
+    // Hash the decimal string with SHA1 to match Python
+    hasher := sha1.New()
+    hasher.Write([]byte(macDecimalStr))
+    hash := hasher.Sum(nil)
+    hexHash := fmt.Sprintf("%x", hash)
+
+    // Cycle through the hash to get the desired length (matching Python's itertools.cycle)
+    result := ""
+    for i := 0; i < length; i++ {
+        result += string(hexHash[i%len(hexHash)])
+    }
+
+    return result
 }
 
 func (c *Client) DoRequest(endpoint, protocol, method string, headers map[string]string, body IoTApiRequest) (*http.Response, error) {
@@ -275,7 +317,7 @@ func (cg *CloudIOTGateway) GetRegion(countryCode, authCode string) (*RegionRespo
 	}
 
 	request := new(iot.CommonParams).
-		SetApiVer("1.0.2").SetLanguage("en-US")
+		SetApiVer("1.0.2").SetLanguage("en-US")  // Region API needs 1.0.2
 
 	body := new(iot.IoTApiRequest).
         SetId(uuid.New().String()).
@@ -299,7 +341,8 @@ func (cg *CloudIOTGateway) GetRegion(countryCode, authCode string) (*RegionRespo
     }
 
     if code, ok := responseBodyDict["code"].(float64); !ok || int(code) != 200 {
-        return nil, fmt.Errorf("error in getting regions: %v", responseBodyDict["msg"])
+        return nil, fmt.Errorf("error in getting regions: code=%v, msg=%v, full response=%v",
+            responseBodyDict["code"], responseBodyDict["msg"], string(responseBody))
     }
 
     var regionResponse RegionResponse
@@ -467,34 +510,42 @@ func (cg *CloudIOTGateway) ListDevices() ([]Device, error) {
 
 func (cg *CloudIOTGateway) AepHandle() error {
 
+    // Use the API gateway endpoint from region response if available, like Python does
+    aepDomain := cg.Domain
+    if cg.RegionResponse != nil && cg.RegionResponse.Data.ApiGatewayEndpoint != "" {
+        aepDomain = cg.RegionResponse.Data.ApiGatewayEndpoint
+    }
+
     config := new(iot.Config).
 		SetAppKey(cg.AppKey).
 		SetAppSecret(cg.AppSecret).
-		SetDomain(cg.Domain)
+		SetDomain(aepDomain)
 
     client, err := iot.NewClient(config)
 	if err != nil {
 		panic(err)
 	}
 
-    timeNow := time.Now().Unix()
+    // Use float timestamp like Python's time.time()
+    timeNow := float64(time.Now().UnixNano()) / 1e9
+    timestampStr := fmt.Sprintf("%.7f", timeNow)  // Match Python's precision
 	dataToSign := map[string]string{
 		"appKey":    cg.AppKey,
 		"clientId":  cg.ClientID,
 		"deviceSn":  cg.DeviceSN,
-		"timestamp": fmt.Sprintf("%d", timeNow),
+		"timestamp": timestampStr,
 	}
     params := map[string]interface{}{
 			"authInfo": map[string]string{
 				"clientId":  cg.ClientID,
 				"sign":      cg.Sign(dataToSign),
 				"deviceSn":  cg.DeviceSN,
-				"timestamp": fmt.Sprintf("%d", timeNow),
+				"timestamp": timestampStr,
 			},
 		}
 
 	request := new(iot.CommonParams).
-		SetApiVer("1.0.2").SetLanguage("en-US")
+		SetApiVer("1.0.0").SetLanguage("en-US")  // Match Python's API version
 
 	body := new(iot.IoTApiRequest).
         SetId(uuid.New().String()).
@@ -750,72 +801,70 @@ func (cg *CloudIOTGateway) SendCloudCommand(iotID string, command []byte) (strin
 		return "", fmt.Errorf("session or region response is nil")
 	}
 
-	// Create the request payload
+	// Create the IoT API Gateway client using the SDK
+	config := &iot.Config{
+		AppKey:    tea.String(cg.AppKey),
+		AppSecret: tea.String(cg.AppSecret),
+		Domain:    tea.String(cg.RegionResponse.Data.ApiGatewayEndpoint),
+	}
+
+	client, err := iot.NewClient(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create IoT client: %w", err)
+	}
+
+	// Create the request payload using SDK types
 	messageID := uuid.New().String()
-	params := SendCloudCommandParams{
-		Args: map[string]string{
-			"content": base64.StdEncoding.EncodeToString(command),
+
+	// Create CommonParams using SDK type
+	commonParams := &iot.CommonParams{
+		ApiVer:   tea.String("1.0.5"),
+		Language: tea.String("en-US"),
+		IotToken: tea.String(cg.SessionByAuthCodeResponse.Data.IotToken),
+	}
+
+	// Create IoTApiRequest using SDK type
+	apiRequest := &iot.IoTApiRequest{
+		Id:      tea.String(messageID),
+		Version: tea.String("1.0"),
+		Request: commonParams,
+		Params: map[string]interface{}{
+			"args": map[string]string{
+				"content": base64.StdEncoding.EncodeToString(command),
+			},
+			"identifier": "device_protobuf_sync_service",
+			"iotId":      iotID,
 		},
-		Identifier: "device_protobuf_sync_service",
-		IotId:      iotID,
 	}
 
-	request := CommonParams{
-		APIVer:   "1.0.5",
-		Language: "en-US",
-		IotToken: cg.SessionByAuthCodeResponse.Data.IotToken,
-	}
-
-	body := IoTApiRequest{
-		ID:      messageID,
-		Params:  map[string]interface{}{"args": params.Args, "identifier": params.Identifier, "iotId": params.IotId},
-		Request: request,
-		Version: "1.0",
-	}
-
-	// Marshal the request body to JSON
-	bodyBytes, err := json.Marshal(body)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal request body: %w", err)
-	}
-
-	// Create the HTTP request
-	url := fmt.Sprintf("https://%s/thing/service/invoke", cg.RegionResponse.Data.ApiGatewayEndpoint)
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(bodyBytes))
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
-
-	// Set the necessary headers
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-ca-key", cg.AppKey)
-	req.Header.Set("x-ca-signaturemethod", "HmacSHA256")
-	req.Header.Set("accept", "application/json")
-	req.Header.Set("date", time.Now().UTC().Format(http.TimeFormat))
-
-	// Sign the request
-	signature, err := cg.signRequest(req, bodyBytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to sign request: %w", err)
-	}
-	req.Header.Set("x-ca-signature", signature)
-
-	// Send the request
-	client := &http.Client{}
-	resp, err := client.Do(req)
+	// Send the request using the SDK
+	runtimeOptions := &util.RuntimeOptions{}
+	response, err := client.DoRequest(tea.String("/thing/service/invoke"), tea.String("https"), tea.String("POST"), nil, apiRequest, runtimeOptions)
 	if err != nil {
 		return "", fmt.Errorf("failed to send request: %w", err)
 	}
-	defer resp.Body.Close()
+
+	// Read the response body
+	respBodyBytes, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+	defer response.Body.Close()
 
 	// Parse the response
-	var response SendCloudCommandResponse
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	var responseBody map[string]interface{}
+	if err := json.Unmarshal(respBodyBytes, &responseBody); err != nil {
 		return "", fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	if response.Code != 200 {
-		return "", fmt.Errorf("error in sending cloud command: %d - %s", response.Code, response.Message)
+	code, ok := responseBody["code"].(float64)
+	if !ok {
+		code = 0
+	}
+
+	if int(code) != 200 && int(code) != 0 {
+		message := responseBody["message"]
+		return "", fmt.Errorf("error in sending cloud command: %d - %v", int(code), message)
 	}
 
 	return messageID, nil

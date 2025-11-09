@@ -21,6 +21,7 @@ type MowingDevice struct {
 	onConnectedEvent    DataEvent
 	operationLock       sync.Mutex
 	MQTTProperties      mqtt.PropertyParams
+	BatteryPercentage   int
 }
 
 func NewMowingDevice(iotDevice *aliyuniot.Device, cloudGateway aliyuniot.CloudIOTGateway, mammoCloud *MammotionCloud) *MowingDevice {

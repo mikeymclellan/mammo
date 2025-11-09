@@ -8,13 +8,14 @@ import (
 )
 
 type StateManager struct {
-    Device                *MowingDevice
-    LastUpdatedAt         time.Time
-    GetHashAckCallback    func(*model.NavGetHashListAck)
-    GetCommonDataAckCallback func(interface{})
-    OnNotificationCallback func(string, interface{})
-    QueueCommandCallback  func(string, map[string]interface{}) ([]byte, error)
-    mu                    sync.Mutex
+	Device                 *MowingDevice
+	LastUpdatedAt          time.Time
+	GetHashAckCallback     func(*model.NavGetHashListAck)
+	GetCommonDataAckCallback func(interface{})
+	OnNotificationCallback func(string, interface{})
+	QueueCommandCallback   func(string, map[string]interface{}) ([]byte, error)
+	OnPropertiesReceived   func() // New callback
+	mu                     sync.Mutex
 }
 
 func NewStateManager(device *MowingDevice) *StateManager {
@@ -33,9 +34,15 @@ func (sm *StateManager) SetDevice(device *MowingDevice) {
 }
 
 func (sm *StateManager) Properties(properties *mqtt.ThingPropertiesMessage) {
-    sm.mu.Lock()
-    defer sm.mu.Unlock()
-    sm.Device.MQTTProperties = properties.Params
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.Device.MQTTProperties = properties.Params
+	if val, ok := properties.Params.Items.BatteryPercentage.Value.(float64); ok {
+		sm.Device.BatteryPercentage = int(val)
+		if sm.OnPropertiesReceived != nil {
+			sm.OnPropertiesReceived()
+		}
+	}
 }
 
 func (sm *StateManager) Notification(message *LubaMsg) {

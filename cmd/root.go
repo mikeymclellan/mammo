@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
+	"sync"
+	"time"
 
 	"mammo/aliyuniot"
 	"mammo/auth"
@@ -39,7 +40,9 @@ func Login() {
 		fmt.Println("Error getting region:", err)
 		return
 	}
+	fmt.Printf("Region from API: %s\n", cg.RegionResponse.Data.RegionId)
 
+	// Keep ap-southeast-1 for auth/tokens, but MQTT will use cn-shanghai
 	err = cg.Connect()
 	if err != nil {
 		fmt.Println("Error connecting to cloud:", err)
@@ -67,14 +70,7 @@ func Login() {
 	}
 	fmt.Println("Session by auth code successful")
 
-	// Refresh the session to get the definitive, valid iotToken
-	err = cg.CheckOrRefreshSession()
-	if err != nil {
-		fmt.Println("Error refreshing session:", err)
-		return
-	}
-
-	// Get the list of devices using the refreshed token
+	// 1. Get the device list (this uses the session token from SessionByAuthCode)
 	devices, err := cg.ListDevices()
 	if err != nil {
 		fmt.Println("Error getting devices:", err)
@@ -85,7 +81,6 @@ func Login() {
 		fmt.Println("No devices found")
 		return
 	}
-
 	fmt.Println("Devices found:")
 	for _, device := range devices {
 		fmt.Println("    Nickname:", device.NickName)
@@ -95,40 +90,95 @@ func Login() {
 		fmt.Println("")
 	}
 
-	// Assuming we're working with the first device
-	firstDevice := devices[0]
+	// Refresh the session token to ensure it's valid for MQTT binding
+	fmt.Printf("Before refresh - iotToken (first 20 chars): %s...\n", cg.SessionByAuthCodeResponse.Data.IotToken[:20])
+	err = cg.CheckOrRefreshSession()
+	if err != nil {
+		fmt.Println("Error refreshing session:", err)
+		return
+	}
+	fmt.Printf("After refresh - iotToken (first 20 chars): %s... (expires: %d)\n", cg.SessionByAuthCodeResponse.Data.IotToken[:20], cg.SessionByAuthCodeResponse.Data.IotTokenExpire)
 
-	// 1. Create and Configure MQTT Client using the FINAL refreshed iotToken
+	// 2. Create MQTT and Cloud clients with token from SessionByAuthCode
+	fmt.Printf("AEP ProductKey: %s\n", cg.AepResponse.Data.ProductKey)
+	fmt.Printf("AEP DeviceName: %s\n", cg.AepResponse.Data.DeviceName)
+	fmt.Printf("AEP DeviceSecret: %s\n", cg.AepResponse.Data.DeviceSecret)
+
 	mqttClient := mammotion.NewMammotionMQTT(
 		cg.RegionResponse.Data.RegionId,
 		cg.AepResponse.Data.ProductKey,
 		cg.AepResponse.Data.DeviceName,
 		cg.AepResponse.Data.DeviceSecret,
-		cg.SessionByAuthCodeResponse.Data.IotToken,
+		cg.SessionByAuthCodeResponse.Data.IotToken, // Use fresh token immediately
 		cg,
 	)
-
-	// 2. Create MammotionCloud
 	mammoCloud := mammotion.NewMammotionCloud(mqttClient, cg)
 
-	// 3. Create MowingDevice
-	mowingDevice := mammotion.NewMowingDevice(&firstDevice, *cg, mammoCloud)
-
-	// 4. Create the BaseCloudDevice (for command sending)
-	stateManager := mammotion.NewStateManager(mowingDevice)
-	cloudDevice := mammotion.NewMammotionBaseCloudDevice(mammoCloud, mowingDevice, stateManager)
-
-	// 5. Connect the cloud client
+	// 4. Connect MQTT client
+	var wg sync.WaitGroup
+	wg.Add(1)
+	mqttClient.OnReady = func() {
+		wg.Done()
+	}
 	mammoCloud.ConnectAsync()
+	wg.Wait()
 
-	// 6. Queue command
-	fmt.Println("Sending 'move_forward' command...")
-	_, err = cloudDevice.QueueCommand("move_forward", map[string]interface{}{"linear": 10})
+	// 4.5 Get first device (don't subscribe to Luba topics, responses come via AEP)
+	firstDevice := devices[0]
+	fmt.Printf("Using device: %s (IotID: %s)\n", firstDevice.DeviceName, firstDevice.IotId)
+
+	// 4.6 Create the device-specific objects BEFORE sending commands
+	mowingDevice := mammotion.NewMowingDevice(&firstDevice, *cg, mammoCloud)
+	stateManager := mammotion.NewStateManager(mowingDevice)
+	mammotion.NewMammotionBaseCloudDevice(mammoCloud, mowingDevice, stateManager)
+
+	propertiesReceived := make(chan struct{})
+	stateManager.OnPropertiesReceived = func() {
+		close(propertiesReceived)
+	}
+
+	// 4.7 Send ble_sync command to trigger device reporting
+	fmt.Printf("Sending ble_sync command to activate device reporting...\n")
+	bleSyncData, err := mammotion.SendTodevBleSync(3)
 	if err != nil {
-		fmt.Println("Error queuing command:", err)
+		fmt.Printf("Error creating ble_sync command: %v\n", err)
 		return
 	}
-	fmt.Println("Command queued successfully.")
+	msgId, err := cg.SendCloudCommand(firstDevice.IotId, bleSyncData)
+	if err != nil {
+		fmt.Printf("Error sending ble_sync command: %v\n", err)
+		return
+	}
+	fmt.Printf("ble_sync command sent successfully (message ID: %s)\n", msgId)
+
+	// 4.8 Send get_report_cfg command via HTTP API (not MQTT)
+	fmt.Printf("Sending get_report_cfg command to device: %s (IotID: %s)\n", firstDevice.DeviceName, firstDevice.IotId)
+	reportCfgData, err := mammotion.GetReportCfg(10000, 1000, 2000)
+	if err != nil {
+		fmt.Printf("Error creating get_report_cfg command: %v\n", err)
+		return
+	}
+
+	msgId, err = cg.SendCloudCommand(firstDevice.IotId, reportCfgData)
+	if err != nil {
+		fmt.Printf("Error sending get_report_cfg command: %v\n", err)
+		return
+	}
+	fmt.Printf("get_report_cfg command sent successfully (message ID: %s)\n", msgId)
+
+	fmt.Println("Waiting for device properties (will wait up to 2 minutes)...")
+
+	select {
+	case <-propertiesReceived:
+		fmt.Printf("✅ Battery Level: %d%%\n", mowingDevice.BatteryPercentage)
+	case <-time.After(2 * time.Minute):
+		fmt.Println("⏱️  Timed out waiting for device properties after 2 minutes.")
+		fmt.Println("The command was sent successfully, but no MQTT response was received.")
+		fmt.Println("This could mean:")
+		fmt.Println("  - The device needs more time to respond")
+		fmt.Println("  - The device needs to be actively running/awake")
+		fmt.Println("  - Additional setup commands are needed first")
+	}
 }
 
 var rootCmd = &cobra.Command{
@@ -142,23 +192,130 @@ Examples and usage of this application include:
 - Fetching data from Mammotion APIs
 - Subscribing to MQTT topics to receive real-time updates
 - Managing device configurations and settings`,
+}
+
+var batteryCmd = &cobra.Command{
+	Use:   "battery",
+	Short: "Get the battery level of the device",
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) == 0 {
-			log.Fatal("Please provide a command")
+		client, err := auth.ConnectHTTP(username, password)
+		if err != nil {
+			fmt.Println("Error logging in:", err)
+			return
 		}
-		if args[0] == "dock" {
-			fmt.Println("wooooof!")
-		} else if args[0] == "login" {
-			Login()
-		} else {
-			fmt.Println("Sorry, I don't know that command :(")
+		if client.LoginInfo == nil {
+			fmt.Println("Error logging in: LoginInfo is nil")
+			return
 		}
+
+		cg := aliyuniot.NewCloudIOTGateway()
+		_, err = cg.GetRegion(client.LoginInfo.UserInformation.DomainAbbreviation, client.LoginInfo.AuthorizationCode)
+		if err != nil {
+			fmt.Println("Error getting region:", err)
+			return
+		}
+
+		err = cg.Connect()
+		if err != nil {
+			fmt.Println("Error connecting to cloud:", err)
+			return
+		}
+		_, err = cg.LoginByOAuth(client.LoginInfo.UserInformation.DomainAbbreviation, client.LoginInfo.AuthorizationCode)
+		if err != nil {
+			fmt.Println("IOT login error:", err)
+			return
+		}
+
+		err = cg.AepHandle()
+		if err != nil {
+			fmt.Println("Error handling AEP:", err)
+			return
+		}
+
+		err = cg.SessionByAuthCode()
+		if err != nil {
+			fmt.Println("Error getting session by auth code:", err)
+			return
+		}
+
+		devices, err := cg.ListDevices()
+		if err != nil {
+			fmt.Println("Error getting devices:", err)
+			return
+		}
+
+		err = cg.CheckOrRefreshSession()
+		if err != nil {
+			fmt.Println("Error refreshing session:", err)
+			return
+		}
+
+		mqttClient := mammotion.NewMammotionMQTT(
+			cg.RegionResponse.Data.RegionId,
+			cg.AepResponse.Data.ProductKey,
+			cg.AepResponse.Data.DeviceName,
+			cg.AepResponse.Data.DeviceSecret,
+			"", // Set initial token to empty, it will be set later
+			cg,
+		)
+		mqttClient.SetIotToken(cg.SessionByAuthCodeResponse.Data.IotToken)
+		mammoCloud := mammotion.NewMammotionCloud(mqttClient, cg)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		mqttClient.OnReady = func() {
+			wg.Done()
+		}
+		mammoCloud.ConnectAsync()
+		wg.Wait()
+
+		if len(devices) == 0 {
+			fmt.Println("No devices found")
+			return
+		}
+		firstDevice := devices[0]
+		mowingDevice := mammotion.NewMowingDevice(&firstDevice, *cg, mammoCloud)
+		stateManager := mammotion.NewStateManager(mowingDevice)
+		mammotion.NewMammotionBaseCloudDevice(mammoCloud, mowingDevice, stateManager)
+
+		propertiesReceived := make(chan struct{})
+		stateManager.OnPropertiesReceived = func() {
+			close(propertiesReceived)
+		}
+
+		fmt.Println("Waiting for device properties...")
+
+		select {
+		case <-propertiesReceived:
+			fmt.Printf("Battery Level: %d%%\n", mowingDevice.BatteryPercentage)
+		case <-time.After(30 * time.Second):
+			fmt.Println("Timed out waiting for device properties.")
+		}
+	},
+}
+
+var loginCmd = &cobra.Command{
+	Use:   "login",
+	Short: "Login to the Mammotion API",
+	Run: func(cmd *cobra.Command, args []string) {
+		Login()
+	},
+}
+
+var dockCmd = &cobra.Command{
+	Use:   "dock",
+	Short: "Dock the device",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println("wooooof!")
 	},
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
+	rootCmd.AddCommand(batteryCmd)
+	rootCmd.AddCommand(loginCmd)
+	rootCmd.AddCommand(dockCmd)
 	err := rootCmd.Execute()
 	if err != nil {
 		os.Exit(1)
@@ -174,7 +331,7 @@ func init() {
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
-	rootCmd.Flags().StringVarP(&username, "username", "u", "", "Username for login")
-	rootCmd.Flags().StringVarP(&password, "password", "p", "", "Password for login")
+	rootCmd.PersistentFlags().StringVarP(&username, "username", "u", "", "Username for login")
+	rootCmd.PersistentFlags().StringVarP(&password, "password", "p", "", "Password for login")
 }
 

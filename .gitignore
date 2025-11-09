@@ -1,1 +1,26 @@
+# Python protobuf generated files
 data/python
+
+# Go binary
+/mammo
+
+# macOS files
+.DS_Store
+._*
+.AppleDouble
+.LSOverride
+
+# Go build cache
+*.test
+*.out
+*.prof
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Protobuf generated files (if regenerated)
+proto/*.pb.go
