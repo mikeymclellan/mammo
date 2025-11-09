@@ -130,7 +130,16 @@ func (mc *MammotionCloud) onMQTTMessage(topic string, payload []byte, iotID stri
 		return
 	}
 
-	mc.mqttMessageEvent.Trigger(map[string]interface{}{"topic": topic, "payload": payloadMap})
+	// Parse as ThingEventMessage for device subscribers
+	if strings.HasSuffix(topic, "/app/down/thing/events") {
+		eventMsg, err := mqtt.FromJSON(payload)
+		if err == nil {
+			mc.mqttMessageEvent.Trigger(eventMsg)
+		} else {
+			log.Printf("Error parsing ThingEventMessage: %v", err)
+		}
+	}
+
 	mc.handleMQTTMessage(topic, payloadMap)
 }
 

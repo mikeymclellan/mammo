@@ -8,6 +8,8 @@ import (
 	"time"
 
 	mqtt "mammo/data/mqtt"
+	pb "mammo/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 type MammotionBaseCloudDevice struct {
@@ -171,12 +173,25 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 		return
 	}
 	mbcd.updateRawData(binaryData)
-	newMsg := LubaMsg{}
-	err = newMsg.Parse(binaryData)
+
+	// Parse the protobuf message
+	var lubaMsg pb.LubaMsg
+	err = proto.Unmarshal(binaryData, &lubaMsg)
 	if err != nil {
-		log.Printf("Error parsing message: %v", err)
+		log.Printf("Error parsing protobuf message: %v", err)
 		return
 	}
+
+	// Extract battery data from system messages
+	if sys := lubaMsg.GetSys(); sys != nil {
+		if reportData := sys.GetToappReportData(); reportData != nil {
+			if devStatus := reportData.GetDev(); devStatus != nil {
+				batteryLevel := devStatus.GetBatteryVal()
+				mbcd.stateManager.UpdateBatteryFromProtobuf(batteryLevel)
+			}
+		}
+	}
+
 	if mbcd.commands.GetDeviceProductKey() == "" && mbcd.commands.GetDeviceName() == deviceName {
 		mbcd.commands.SetDeviceProductKey(productKey)
 	}
@@ -186,6 +201,10 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 			fut.Resolve(binaryData)
 		}
 	}
+
+	// Still call the placeholder Notification for compatibility
+	newMsg := LubaMsg{}
+	newMsg.Parse(binaryData)
 	mbcd.stateManager.Notification(&newMsg)
 }
 

@@ -45,11 +45,21 @@ func (sm *StateManager) Properties(properties *mqtt.ThingPropertiesMessage) {
 	}
 }
 
+func (sm *StateManager) UpdateBatteryFromProtobuf(batteryLevel int32) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.Device.BatteryPercentage = int(batteryLevel)
+	sm.LastUpdatedAt = time.Now()
+	if sm.OnPropertiesReceived != nil {
+		sm.OnPropertiesReceived()
+	}
+}
+
 func (sm *StateManager) Notification(message *LubaMsg) {
     sm.mu.Lock()
     defer sm.mu.Unlock()
     sm.LastUpdatedAt = time.Now()
 
-    // The original python code has a dispatcher here, but we'll just do a switch for now
-    // This is not fully implemented
+    // Battery data is now extracted in parseMessageForDevice and
+    // handled via UpdateBatteryFromProtobuf
 }
