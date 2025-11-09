@@ -167,15 +167,21 @@ func (m interactiveModel) View() string {
 		status = "🟡 CONNECTING..."
 	}
 
+	// Normalize angle to 0-360 range
+	normalizedAngle := m.position.angle % 360
+	if normalizedAngle < 0 {
+		normalizedAngle += 360
+	}
+
 	info := fmt.Sprintf(
 		"%s\n\n"+
-			"Position: X=%.2f Y=%.2f Angle=%d°\n"+
+			"Position: X=%.0f Y=%.0f Angle=%d°\n"+
 			"Battery: %d%%\n"+
 			"Move Distance: %dmm (%.1fcm)\n"+
 			"Speed: %dmm/s\n"+
 			"Status: %s",
 		status,
-		m.position.x, m.position.y, m.position.angle,
+		m.position.x, m.position.y, normalizedAngle,
 		m.batteryLevel,
 		m.moveDistance, float32(m.moveDistance)/10.0,
 		m.speed,
@@ -199,13 +205,12 @@ func (m interactiveModel) View() string {
 // Movement commands
 func (m interactiveModel) moveForward() tea.Cmd {
 	return func() tea.Msg {
-		m.status = "Moving forward..."
-
 		// Refresh session to ensure identityId is valid
 		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
 			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 		}
 
+		// Send move command
 		data, err := mammotion.SendMotionControl(m.speed, 0)
 		if err != nil {
 			return errMsg{err}
@@ -214,19 +219,33 @@ func (m interactiveModel) moveForward() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+
+		// Calculate how long to move: time = distance / speed
+		moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
+		time.Sleep(moveDuration)
+
+		// Send stop command
+		stopData, err := mammotion.StopMotion()
+		if err != nil {
+			return errMsg{err}
+		}
+		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+		if err != nil {
+			return errMsg{err}
+		}
+
 		return nil
 	}
 }
 
 func (m interactiveModel) moveBackward() tea.Cmd {
 	return func() tea.Msg {
-		m.status = "Moving backward..."
-
 		// Refresh session to ensure identityId is valid
 		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
 			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 		}
 
+		// Send move command
 		data, err := mammotion.SendMotionControl(-m.speed, 0)
 		if err != nil {
 			return errMsg{err}
@@ -235,20 +254,34 @@ func (m interactiveModel) moveBackward() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+
+		// Calculate how long to move: time = distance / speed
+		moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
+		time.Sleep(moveDuration)
+
+		// Send stop command
+		stopData, err := mammotion.StopMotion()
+		if err != nil {
+			return errMsg{err}
+		}
+		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+		if err != nil {
+			return errMsg{err}
+		}
+
 		return nil
 	}
 }
 
 func (m interactiveModel) turnLeft() tea.Cmd {
 	return func() tea.Msg {
-		m.status = "Turning left..."
-
 		// Refresh session to ensure identityId is valid
 		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
 			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 		}
 
-		data, err := mammotion.SendMotionControl(0, 45) // 45 degrees/s counterclockwise
+		// Send turn command (45 degrees/s counterclockwise)
+		data, err := mammotion.SendMotionControl(0, 45)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -256,20 +289,33 @@ func (m interactiveModel) turnLeft() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+
+		// Turn for 1 second (45 degrees total)
+		time.Sleep(1 * time.Second)
+
+		// Send stop command
+		stopData, err := mammotion.StopMotion()
+		if err != nil {
+			return errMsg{err}
+		}
+		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+		if err != nil {
+			return errMsg{err}
+		}
+
 		return nil
 	}
 }
 
 func (m interactiveModel) turnRight() tea.Cmd {
 	return func() tea.Msg {
-		m.status = "Turning right..."
-
 		// Refresh session to ensure identityId is valid
 		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
 			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 		}
 
-		data, err := mammotion.SendMotionControl(0, -45) // 45 degrees/s clockwise
+		// Send turn command (45 degrees/s clockwise)
+		data, err := mammotion.SendMotionControl(0, -45)
 		if err != nil {
 			return errMsg{err}
 		}
@@ -277,6 +323,20 @@ func (m interactiveModel) turnRight() tea.Cmd {
 		if err != nil {
 			return errMsg{err}
 		}
+
+		// Turn for 1 second (45 degrees total)
+		time.Sleep(1 * time.Second)
+
+		// Send stop command
+		stopData, err := mammotion.StopMotion()
+		if err != nil {
+			return errMsg{err}
+		}
+		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+		if err != nil {
+			return errMsg{err}
+		}
+
 		return nil
 	}
 }
