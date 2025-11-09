@@ -20,20 +20,22 @@ type position struct {
 }
 
 type interactiveModel struct {
-	cloudGateway   *aliyuniot.CloudIOTGateway
-	device         *aliyuniot.Device
-	position       position
-	batteryLevel   int
-	status         string
-	moveDistance   int32 // movement distance in mm (300mm = 30cm)
-	speed          int32 // speed in mm/s
-	ready          bool
-	quitting       bool
-	err            error
-	stateManager   *mammotion.StateManager
-	mowingDevice   *mammotion.MowingDevice
-	positionChan   chan position
-	batteryChan    chan int
+	cloudGateway     *aliyuniot.CloudIOTGateway
+	device           *aliyuniot.Device
+	position         position
+	lastPosition     position
+	positionUpdates  int
+	batteryLevel     int
+	status           string
+	moveDistance     int32 // movement distance in mm (300mm = 30cm)
+	speed            int32 // speed in mm/s
+	ready            bool
+	quitting         bool
+	err              error
+	stateManager     *mammotion.StateManager
+	mowingDevice     *mammotion.MowingDevice
+	positionChan     chan position
+	batteryChan      chan int
 }
 
 type positionUpdateMsg position
@@ -116,7 +118,9 @@ func (m interactiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.status = "Connected and ready!"
 
 	case positionUpdateMsg:
+		m.lastPosition = m.position
 		m.position = position(msg)
+		m.positionUpdates++
 		// Keep listening for more position updates
 		return m, waitForPositionUpdates(m.positionChan)
 
@@ -177,15 +181,21 @@ func (m interactiveModel) View() string {
 		normalizedAngle += 360
 	}
 
+	// Calculate position delta
+	deltaX := m.position.x - m.lastPosition.x
+	deltaY := m.position.y - m.lastPosition.y
+
 	info := fmt.Sprintf(
 		"%s\n\n"+
 			"Position: X=%.0f Y=%.0f Angle=%d°\n"+
+			"Delta: ΔX=%.0f ΔY=%.0f (Updates: %d)\n"+
 			"Battery: %d%%\n"+
 			"Move Distance: %dmm (%.1fcm)\n"+
-			"Speed: %dmm/s\n"+
+			"Speed: %d (units unknown - testing)\n"+
 			"Status: %s",
 		status,
 		m.position.x, m.position.y, normalizedAngle,
+		deltaX, deltaY, m.positionUpdates,
 		m.batteryLevel,
 		m.moveDistance, float32(m.moveDistance)/10.0,
 		m.speed,
@@ -195,11 +205,13 @@ func (m interactiveModel) View() string {
 	controls := `Controls:
   ↑/W     - Move Forward
   ↓/S     - Move Backward
-  ←/A     - Turn Left
-  →/D     - Turn Right
-  SPACE   - Stop
-  +/-     - Adjust Move Distance
-  Q       - Quit`
+  ←/A     - Turn Left (45°)
+  →/D     - Turn Right (45°)
+  SPACE   - Emergency Stop
+  +/-     - Adjust Move Distance (±50mm)
+  Q       - Quit
+
+Note: Speed units are being tested. Watch Delta values to see movement.`
 
 	return titleStyle.Render("🤖 Mammotion Interactive Control") + "\n" +
 		boxStyle.Render(infoStyle.Render(info)) + "\n" +
@@ -487,18 +499,17 @@ func runInteractive() error {
 	batteryChan := make(chan int, 10)
 
 	// Initialize the model
+	initialPos := position{x: 0, y: 0, angle: 0}
 	model := interactiveModel{
 		cloudGateway: cg,
 		device:       &firstDevice,
-		position: position{
-			x:     0,
-			y:     0,
-			angle: 0,
-		},
+		position: initialPos,
+		lastPosition: initialPos,
+		positionUpdates: 0,
 		batteryLevel:   0,
 		status:         "Connecting to device...",
-		moveDistance:   300, // 30cm default
-		speed:          200, // 200mm/s = 0.2m/s
+		moveDistance:   1000, // 1000mm = 1m default
+		speed:          500,  // Try 500 (units unclear - might be cm/s or different scale)
 		ready:          false,
 		stateManager:   stateManager,
 		mowingDevice:   mowingDevice,
