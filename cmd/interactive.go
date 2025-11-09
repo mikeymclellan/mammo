@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"mammo/aliyuniot"
 	"mammo/auth"
@@ -326,18 +327,26 @@ func runInteractive() error {
 		cg.AepResponse.Data.ProductKey,
 		cg.AepResponse.Data.DeviceName,
 		cg.AepResponse.Data.DeviceSecret,
-		cg.SessionByAuthCodeResponse.Data.IotToken,
+		"", // Set initial token to empty, it will be set later
 		cg,
 	)
+	mqttClient.SetIotToken(cg.SessionByAuthCodeResponse.Data.IotToken)
 	mammoCloud := mammotion.NewMammotionCloud(mqttClient, cg)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
+	mqttReady := false
 	mqttClient.OnReady = func() {
+		mqttReady = true
 		wg.Done()
 	}
 	mammoCloud.ConnectAsync()
 	wg.Wait()
+
+	// Wait a moment for MQTT to fully initialize
+	if !mqttReady {
+		return fmt.Errorf("MQTT connection not ready")
+	}
 
 	firstDevice := devices[0]
 	mowingDevice := mammotion.NewMowingDevice(&firstDevice, *cg, mammoCloud)
@@ -358,7 +367,7 @@ func runInteractive() error {
 			angle: 0,
 		},
 		batteryLevel:   0,
-		status:         "Initializing...",
+		status:         "Connecting to device...",
 		moveDistance:   300, // 30cm default
 		speed:          200, // 200mm/s = 0.2m/s
 		ready:          false,
@@ -386,18 +395,39 @@ func runInteractive() error {
 		}
 	}
 
-	// Send initial commands to get device reporting
-	bleSyncData, _ := mammotion.SendTodevBleSync(3)
-	cg.SendCloudCommand(firstDevice.IotId, bleSyncData)
-
-	reportCfgData, _ := mammotion.GetReportCfg(10000, 1000, 2000)
-	cg.SendCloudCommand(firstDevice.IotId, reportCfgData)
-
-	// Mark as ready
-	model.ready = true
-
-	// Start the TUI
+	// Start the TUI first
 	p := tea.NewProgram(model)
+
+	// Send initial commands in a goroutine after TUI starts
+	go func() {
+		// Wait a moment to ensure MQTT is fully ready
+		time.Sleep(1 * time.Second)
+
+		// Refresh session one more time to ensure identityId is set
+		err := cg.CheckOrRefreshSession()
+		if err != nil {
+			p.Send(errMsg{err: fmt.Errorf("error refreshing session before commands: %w", err)})
+			return
+		}
+
+		bleSyncData, _ := mammotion.SendTodevBleSync(3)
+		_, err = cg.SendCloudCommand(firstDevice.IotId, bleSyncData)
+		if err != nil {
+			p.Send(errMsg{err: fmt.Errorf("error sending ble_sync: %w", err)})
+			return
+		}
+
+		reportCfgData, _ := mammotion.GetReportCfg(10000, 1000, 2000)
+		_, err = cg.SendCloudCommand(firstDevice.IotId, reportCfgData)
+		if err != nil {
+			p.Send(errMsg{err: fmt.Errorf("error sending report_cfg: %w", err)})
+			return
+		}
+
+		// Mark as ready
+		p.Send(readyMsg{})
+	}()
+
 	_, err = p.Run()
 	if err != nil {
 		return fmt.Errorf("error running TUI: %w", err)
