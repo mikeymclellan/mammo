@@ -198,9 +198,12 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 				x := float32(loc.GetRealPosX())
 				y := float32(loc.GetRealPosY())
 				angle := loc.GetRealToward()
+				posType := loc.GetPosType()
+
+				log.Printf("DEBUG: Position update - X=%.0f Y=%.0f Angle=%d PosType=%d", x, y, angle, posType)
 
 				if mbcd.stateManager.OnPositionUpdate != nil {
-					mbcd.stateManager.OnPositionUpdate(x, y, angle)
+					mbcd.stateManager.OnPositionUpdate(x, y, angle, posType)
 				}
 			}
 		}

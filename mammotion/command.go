@@ -114,8 +114,8 @@ func GetReportCfg(timeout int32, period int32, noChangePeriod int32) ([]byte, er
 }
 
 // SendMotionControl sends a motion control command to the mower
-// linearSpeed: forward/backward speed in mm/s (positive = forward, negative = backward)
-// angularSpeed: rotation speed in degrees/s (positive = counterclockwise, negative = clockwise)
+// linearSpeed: forward/backward speed (POSITIVE = forward ~1000, NEGATIVE = backward ~-1000)
+// angularSpeed: rotation speed (NEGATIVE = left ~-450, POSITIVE = right ~450)
 func SendMotionControl(linearSpeed int32, angularSpeed int32) ([]byte, error) {
 	// Create the motion control message
 	motionCtrl := &pb.DrvMotionCtrl{

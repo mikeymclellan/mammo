@@ -14,9 +14,10 @@ import (
 )
 
 type position struct {
-	x     float32
-	y     float32
-	angle int32
+	x       float32
+	y       float32
+	angle   int32
+	posType int32 // RTK fix quality: 4=Fixed, 5=Float, 1=DGPS, 0=GPS
 }
 
 type interactiveModel struct {
@@ -101,15 +102,15 @@ func (m interactiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "+", "=":
-			m.moveDistance += 50
-			if m.moveDistance > 1000 {
-				m.moveDistance = 1000
+			m.moveDistance += 100
+			if m.moveDistance > 3000 {
+				m.moveDistance = 3000
 			}
 
 		case "-", "_":
-			m.moveDistance -= 50
-			if m.moveDistance < 50 {
-				m.moveDistance = 50
+			m.moveDistance -= 100
+			if m.moveDistance < 100 {
+				m.moveDistance = 100
 			}
 		}
 
@@ -138,6 +139,21 @@ func (m interactiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func getRTKStatus(posType int32) string {
+	switch posType {
+	case 4:
+		return "🟢 RTK Fixed"
+	case 5:
+		return "🟡 RTK Float"
+	case 1:
+		return "🟠 DGPS"
+	case 0:
+		return "🔴 GPS Only"
+	default:
+		return fmt.Sprintf("❓ Unknown (%d)", posType)
+	}
 }
 
 func (m interactiveModel) View() string {
@@ -189,15 +205,17 @@ func (m interactiveModel) View() string {
 		"%s\n\n"+
 			"Position: X=%.0f Y=%.0f Angle=%d°\n"+
 			"Delta: ΔX=%.0f ΔY=%.0f (Updates: %d)\n"+
+			"GPS Fix: %s\n"+
 			"Battery: %d%%\n"+
-			"Move Distance: %dmm (%.1fcm)\n"+
-			"Speed: %d (units unknown - testing)\n"+
+			"Move Distance: %dmm (%.1fm)\n"+
+			"Speed: %d (±1000 typical)\n"+
 			"Status: %s",
 		status,
 		m.position.x, m.position.y, normalizedAngle,
 		deltaX, deltaY, m.positionUpdates,
+		getRTKStatus(m.position.posType),
 		m.batteryLevel,
-		m.moveDistance, float32(m.moveDistance)/10.0,
+		m.moveDistance, float32(m.moveDistance)/1000.0,
 		m.speed,
 		m.status,
 	)
@@ -205,13 +223,13 @@ func (m interactiveModel) View() string {
 	controls := `Controls:
   ↑/W     - Move Forward
   ↓/S     - Move Backward
-  ←/A     - Turn Left (45°)
-  →/D     - Turn Right (45°)
+  ←/A     - Turn Left
+  →/D     - Turn Right
   SPACE   - Emergency Stop
-  +/-     - Adjust Move Distance (±50mm)
+  +/-     - Adjust Move Distance (±100mm)
   Q       - Quit
 
-Note: Speed units are being tested. Watch Delta values to see movement.`
+Watch Delta values to see real-time movement tracking.`
 
 	return titleStyle.Render("🤖 Mammotion Interactive Control") + "\n" +
 		boxStyle.Render(infoStyle.Render(info)) + "\n" +
@@ -230,22 +248,21 @@ func (m interactiveModel) moveForward() tea.Cmd {
 				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 			}
 
-			// Send move command
-			data, err := mammotion.SendMotionControl(m.speed, 0)
-			if err != nil {
-				return errMsg{err}
-			}
-			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-			if err != nil {
-				return errMsg{err}
-			}
-
-			return statusMsg(fmt.Sprintf("⬆️  Moving forward %dmm...", m.moveDistance))
-		},
-		func() tea.Msg {
-			// Calculate how long to move: time = distance / speed
+			// Send move command repeatedly every 200ms (device expects continuous updates)
 			moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
-			time.Sleep(moveDuration)
+			endTime := time.Now().Add(moveDuration)
+
+			for time.Now().Before(endTime) {
+				data, err := mammotion.SendMotionControl(m.speed, 0)
+				if err != nil {
+					return errMsg{err}
+				}
+				_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+				if err != nil {
+					return errMsg{err}
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
 
 			// Send stop command
 			stopData, err := mammotion.StopMotion()
@@ -273,22 +290,21 @@ func (m interactiveModel) moveBackward() tea.Cmd {
 				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 			}
 
-			// Send move command
-			data, err := mammotion.SendMotionControl(-m.speed, 0)
-			if err != nil {
-				return errMsg{err}
-			}
-			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-			if err != nil {
-				return errMsg{err}
-			}
-
-			return statusMsg(fmt.Sprintf("⬇️  Moving backward %dmm...", m.moveDistance))
-		},
-		func() tea.Msg {
-			// Calculate how long to move: time = distance / speed
+			// Send move command repeatedly every 200ms
 			moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
-			time.Sleep(moveDuration)
+			endTime := time.Now().Add(moveDuration)
+
+			for time.Now().Before(endTime) {
+				data, err := mammotion.SendMotionControl(-m.speed, 0)
+				if err != nil {
+					return errMsg{err}
+				}
+				_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+				if err != nil {
+					return errMsg{err}
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
 
 			// Send stop command
 			stopData, err := mammotion.StopMotion()
@@ -316,21 +332,21 @@ func (m interactiveModel) turnLeft() tea.Cmd {
 				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 			}
 
-			// Send turn command (45 degrees/s counterclockwise)
-			data, err := mammotion.SendMotionControl(0, 45)
-			if err != nil {
-				return errMsg{err}
-			}
-			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-			if err != nil {
-				return errMsg{err}
-			}
+			// Send turn command repeatedly every 200ms for 3 seconds
+			fmt.Printf("\nDEBUG: Turning left - linear=0, angular=-450\n")
+			endTime := time.Now().Add(3 * time.Second)
 
-			return statusMsg("⬅️  Turning left 45°...")
-		},
-		func() tea.Msg {
-			// Turn for 1 second (45 degrees total)
-			time.Sleep(1 * time.Second)
+			for time.Now().Before(endTime) {
+				data, err := mammotion.SendMotionControl(0, -450)
+				if err != nil {
+					return errMsg{err}
+				}
+				_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+				if err != nil {
+					return errMsg{err}
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
 
 			// Send stop command
 			stopData, err := mammotion.StopMotion()
@@ -358,21 +374,21 @@ func (m interactiveModel) turnRight() tea.Cmd {
 				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
 			}
 
-			// Send turn command (45 degrees/s clockwise)
-			data, err := mammotion.SendMotionControl(0, -45)
-			if err != nil {
-				return errMsg{err}
-			}
-			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-			if err != nil {
-				return errMsg{err}
-			}
+			// Send turn command repeatedly every 200ms for 3 seconds
+			fmt.Printf("\nDEBUG: Turning right - linear=0, angular=450\n")
+			endTime := time.Now().Add(3 * time.Second)
 
-			return statusMsg("➡️  Turning right 45°...")
-		},
-		func() tea.Msg {
-			// Turn for 1 second (45 degrees total)
-			time.Sleep(1 * time.Second)
+			for time.Now().Before(endTime) {
+				data, err := mammotion.SendMotionControl(0, 450)
+				if err != nil {
+					return errMsg{err}
+				}
+				_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+				if err != nil {
+					return errMsg{err}
+				}
+				time.Sleep(200 * time.Millisecond)
+			}
 
 			// Send stop command
 			stopData, err := mammotion.StopMotion()
@@ -508,8 +524,8 @@ func runInteractive() error {
 		positionUpdates: 0,
 		batteryLevel:   0,
 		status:         "Connecting to device...",
-		moveDistance:   1000, // 1000mm = 1m default
-		speed:          500,  // Try 500 (units unclear - might be cm/s or different scale)
+		moveDistance:   1000, // 1000mm = 1 meter
+		speed:          1000, // Speed units match Python example (~1000 for full speed)
 		ready:          false,
 		stateManager:   stateManager,
 		mowingDevice:   mowingDevice,
@@ -527,11 +543,14 @@ func runInteractive() error {
 	}
 
 	// Set up position updates callback
-	stateManager.OnPositionUpdate = func(x, y float32, angle int32) {
+	stateManager.OnPositionUpdate = func(x, y float32, angle int32, posType int32) {
+		fmt.Printf("DEBUG: OnPositionUpdate callback - X=%.0f Y=%.0f Angle=%d PosType=%d\n", x, y, angle, posType)
 		select {
-		case positionChan <- position{x: x, y: y, angle: angle}:
+		case positionChan <- position{x: x, y: y, angle: angle, posType: posType}:
+			fmt.Printf("DEBUG: Position sent to channel successfully\n")
 		default:
 			// Channel full, skip this update
+			fmt.Printf("DEBUG: Position channel full, skipped update\n")
 		}
 	}
 
@@ -557,12 +576,23 @@ func runInteractive() error {
 			return
 		}
 
-		reportCfgData, _ := mammotion.GetReportCfg(10000, 1000, 2000)
+		reportCfgData, _ := mammotion.GetReportCfg(300000, 500, 1000) // 5 min timeout, 500ms period
 		_, err = cg.SendCloudCommand(firstDevice.IotId, reportCfgData)
 		if err != nil {
 			p.Send(errMsg{err: fmt.Errorf("error sending report_cfg: %w", err)})
 			return
 		}
+
+		// Send report config periodically to keep position updates flowing
+		go func() {
+			ticker := time.NewTicker(60 * time.Second) // Refresh every minute
+			defer ticker.Stop()
+			for range ticker.C {
+				cg.CheckOrRefreshSession()
+				reportCfgData, _ := mammotion.GetReportCfg(300000, 500, 1000)
+				cg.SendCloudCommand(firstDevice.IotId, reportCfgData)
+			}
+		}()
 
 		// Mark as ready
 		p.Send(readyMsg{})
