@@ -39,6 +39,7 @@ type interactiveModel struct {
 type positionUpdateMsg position
 type batteryUpdateMsg int
 type readyMsg struct{}
+type statusMsg string
 type errMsg struct{ err error }
 
 // waitForPositionUpdates waits for position updates and sends them as messages
@@ -124,6 +125,9 @@ func (m interactiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Keep listening for more battery updates
 		return m, waitForBatteryUpdates(m.batteryChan)
 
+	case statusMsg:
+		m.status = string(msg)
+
 	case errMsg:
 		m.err = msg.err
 		return m, tea.Quit
@@ -204,162 +208,197 @@ func (m interactiveModel) View() string {
 
 // Movement commands
 func (m interactiveModel) moveForward() tea.Cmd {
-	return func() tea.Msg {
-		// Refresh session to ensure identityId is valid
-		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
-			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
-		}
+	return tea.Sequence(
+		func() tea.Msg {
+			return statusMsg("⬆️  Sending forward command...")
+		},
+		func() tea.Msg {
+			// Refresh session to ensure identityId is valid
+			if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+			}
 
-		// Send move command
-		data, err := mammotion.SendMotionControl(m.speed, 0)
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send move command
+			data, err := mammotion.SendMotionControl(m.speed, 0)
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		// Calculate how long to move: time = distance / speed
-		moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
-		time.Sleep(moveDuration)
+			return statusMsg(fmt.Sprintf("⬆️  Moving forward %dmm...", m.moveDistance))
+		},
+		func() tea.Msg {
+			// Calculate how long to move: time = distance / speed
+			moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
+			time.Sleep(moveDuration)
 
-		// Send stop command
-		stopData, err := mammotion.StopMotion()
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send stop command
+			stopData, err := mammotion.StopMotion()
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		return nil
-	}
+			return statusMsg("✅ Movement complete")
+		},
+	)
 }
 
 func (m interactiveModel) moveBackward() tea.Cmd {
-	return func() tea.Msg {
-		// Refresh session to ensure identityId is valid
-		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
-			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
-		}
+	return tea.Sequence(
+		func() tea.Msg {
+			return statusMsg("⬇️  Sending backward command...")
+		},
+		func() tea.Msg {
+			// Refresh session to ensure identityId is valid
+			if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+			}
 
-		// Send move command
-		data, err := mammotion.SendMotionControl(-m.speed, 0)
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send move command
+			data, err := mammotion.SendMotionControl(-m.speed, 0)
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		// Calculate how long to move: time = distance / speed
-		moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
-		time.Sleep(moveDuration)
+			return statusMsg(fmt.Sprintf("⬇️  Moving backward %dmm...", m.moveDistance))
+		},
+		func() tea.Msg {
+			// Calculate how long to move: time = distance / speed
+			moveDuration := time.Duration(float64(m.moveDistance) / float64(m.speed) * float64(time.Second))
+			time.Sleep(moveDuration)
 
-		// Send stop command
-		stopData, err := mammotion.StopMotion()
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send stop command
+			stopData, err := mammotion.StopMotion()
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		return nil
-	}
+			return statusMsg("✅ Movement complete")
+		},
+	)
 }
 
 func (m interactiveModel) turnLeft() tea.Cmd {
-	return func() tea.Msg {
-		// Refresh session to ensure identityId is valid
-		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
-			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
-		}
+	return tea.Sequence(
+		func() tea.Msg {
+			return statusMsg("⬅️  Sending turn left command...")
+		},
+		func() tea.Msg {
+			// Refresh session to ensure identityId is valid
+			if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+			}
 
-		// Send turn command (45 degrees/s counterclockwise)
-		data, err := mammotion.SendMotionControl(0, 45)
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send turn command (45 degrees/s counterclockwise)
+			data, err := mammotion.SendMotionControl(0, 45)
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		// Turn for 1 second (45 degrees total)
-		time.Sleep(1 * time.Second)
+			return statusMsg("⬅️  Turning left 45°...")
+		},
+		func() tea.Msg {
+			// Turn for 1 second (45 degrees total)
+			time.Sleep(1 * time.Second)
 
-		// Send stop command
-		stopData, err := mammotion.StopMotion()
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send stop command
+			stopData, err := mammotion.StopMotion()
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		return nil
-	}
+			return statusMsg("✅ Turn complete")
+		},
+	)
 }
 
 func (m interactiveModel) turnRight() tea.Cmd {
-	return func() tea.Msg {
-		// Refresh session to ensure identityId is valid
-		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
-			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
-		}
+	return tea.Sequence(
+		func() tea.Msg {
+			return statusMsg("➡️  Sending turn right command...")
+		},
+		func() tea.Msg {
+			// Refresh session to ensure identityId is valid
+			if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+			}
 
-		// Send turn command (45 degrees/s clockwise)
-		data, err := mammotion.SendMotionControl(0, -45)
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send turn command (45 degrees/s clockwise)
+			data, err := mammotion.SendMotionControl(0, -45)
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		// Turn for 1 second (45 degrees total)
-		time.Sleep(1 * time.Second)
+			return statusMsg("➡️  Turning right 45°...")
+		},
+		func() tea.Msg {
+			// Turn for 1 second (45 degrees total)
+			time.Sleep(1 * time.Second)
 
-		// Send stop command
-		stopData, err := mammotion.StopMotion()
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
-		if err != nil {
-			return errMsg{err}
-		}
+			// Send stop command
+			stopData, err := mammotion.StopMotion()
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, stopData)
+			if err != nil {
+				return errMsg{err}
+			}
 
-		return nil
-	}
+			return statusMsg("✅ Turn complete")
+		},
+	)
 }
 
 func (m interactiveModel) stop() tea.Cmd {
-	return func() tea.Msg {
-		m.status = "Stopped"
+	return tea.Sequence(
+		func() tea.Msg {
+			return statusMsg("🛑 Sending stop command...")
+		},
+		func() tea.Msg {
+			// Refresh session to ensure identityId is valid
+			if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+				return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+			}
 
-		// Refresh session to ensure identityId is valid
-		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
-			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
-		}
-
-		data, err := mammotion.StopMotion()
-		if err != nil {
-			return errMsg{err}
-		}
-		_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
-		if err != nil {
-			return errMsg{err}
-		}
-		return nil
-	}
+			data, err := mammotion.StopMotion()
+			if err != nil {
+				return errMsg{err}
+			}
+			_, err = m.cloudGateway.SendCloudCommand(m.device.IotId, data)
+			if err != nil {
+				return errMsg{err}
+			}
+			return statusMsg("🛑 Stopped - Ready")
+		},
+	)
 }
 
 func runInteractive() error {
