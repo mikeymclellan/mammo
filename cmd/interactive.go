@@ -200,6 +200,12 @@ func (m interactiveModel) View() string {
 func (m interactiveModel) moveForward() tea.Cmd {
 	return func() tea.Msg {
 		m.status = "Moving forward..."
+
+		// Refresh session to ensure identityId is valid
+		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+		}
+
 		data, err := mammotion.SendMotionControl(m.speed, 0)
 		if err != nil {
 			return errMsg{err}
@@ -215,6 +221,12 @@ func (m interactiveModel) moveForward() tea.Cmd {
 func (m interactiveModel) moveBackward() tea.Cmd {
 	return func() tea.Msg {
 		m.status = "Moving backward..."
+
+		// Refresh session to ensure identityId is valid
+		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+		}
+
 		data, err := mammotion.SendMotionControl(-m.speed, 0)
 		if err != nil {
 			return errMsg{err}
@@ -230,6 +242,12 @@ func (m interactiveModel) moveBackward() tea.Cmd {
 func (m interactiveModel) turnLeft() tea.Cmd {
 	return func() tea.Msg {
 		m.status = "Turning left..."
+
+		// Refresh session to ensure identityId is valid
+		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+		}
+
 		data, err := mammotion.SendMotionControl(0, 45) // 45 degrees/s counterclockwise
 		if err != nil {
 			return errMsg{err}
@@ -245,6 +263,12 @@ func (m interactiveModel) turnLeft() tea.Cmd {
 func (m interactiveModel) turnRight() tea.Cmd {
 	return func() tea.Msg {
 		m.status = "Turning right..."
+
+		// Refresh session to ensure identityId is valid
+		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+		}
+
 		data, err := mammotion.SendMotionControl(0, -45) // 45 degrees/s clockwise
 		if err != nil {
 			return errMsg{err}
@@ -260,6 +284,12 @@ func (m interactiveModel) turnRight() tea.Cmd {
 func (m interactiveModel) stop() tea.Cmd {
 	return func() tea.Msg {
 		m.status = "Stopped"
+
+		// Refresh session to ensure identityId is valid
+		if err := m.cloudGateway.CheckOrRefreshSession(); err != nil {
+			return errMsg{fmt.Errorf("session refresh failed: %w", err)}
+		}
+
 		data, err := mammotion.StopMotion()
 		if err != nil {
 			return errMsg{err}
