@@ -75,3 +75,8 @@ func (d *MowingDevice) onMQTTMessage(data interface{}) {
 	d.mqttMessageEvent.Trigger(event)
 }
 
+// MqttMessageEvent returns the MQTT message event for subscribing to raw messages
+func (d *MowingDevice) MqttMessageEvent() *DataEvent {
+	return &d.mqttMessageEvent
+}
+

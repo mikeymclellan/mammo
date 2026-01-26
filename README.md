@@ -11,9 +11,11 @@ ported to Go.
 There's a test command that can be used to test the connection to the MQTT
 server.
 
-```bash
-go run main.go login --username [username] --password [password]
-```
+    go run main.go login --username [username] --password [password]
+
+## Build
+
+    go build -o mammo
 
 ## References
 

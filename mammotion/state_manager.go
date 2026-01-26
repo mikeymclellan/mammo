@@ -7,6 +7,20 @@ import (
     "mammo/data/mqtt"
 )
 
+type HashListData struct {
+	Hashes []int64
+}
+
+type MapData struct {
+	Type         int32
+	Hash         int64
+	DataCouple   []int32
+	TotalFrame   int32
+	CurrentFrame int32
+	Action       int32
+	DataLen      int32
+}
+
 type StateManager struct {
 	Device                 *MowingDevice
 	LastUpdatedAt          time.Time
@@ -16,6 +30,8 @@ type StateManager struct {
 	QueueCommandCallback   func(string, map[string]interface{}) ([]byte, error)
 	OnPropertiesReceived   func() // Battery/properties callback
 	OnPositionUpdate       func(x, y float32, angle int32, posType int32) // Position callback
+	OnHashListReceived     func(*HashListData) // Hash list callback
+	OnMapDataReceived      func(*MapData) // Map data callback
 	mu                     sync.Mutex
 }
 

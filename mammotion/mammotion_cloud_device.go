@@ -209,6 +209,37 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 		}
 	}
 
+	// Extract navigation data
+	if nav := lubaMsg.GetNav(); nav != nil {
+		// Extract hash list response
+		if hashListAck := nav.GetToappGethashAck(); hashListAck != nil {
+			hashListData := &HashListData{
+				Hashes: hashListAck.GetDataCouple(),
+			}
+
+			if mbcd.stateManager.OnHashListReceived != nil {
+				mbcd.stateManager.OnHashListReceived(hashListData)
+			}
+		}
+
+		// Extract common data response (map data)
+		if commonDataAck := nav.GetToappGetCommondataAck(); commonDataAck != nil {
+			mapData := &MapData{
+				Type:         commonDataAck.GetType(),
+				Hash:         int64(commonDataAck.GetHash()),
+				DataCouple:   extractDataCoupleAsInt32(commonDataAck.GetDataCouple()),
+				TotalFrame:   commonDataAck.GetTotalFrame(),
+				CurrentFrame: commonDataAck.GetCurrentFrame(),
+				Action:       commonDataAck.GetAction(),
+				DataLen:      commonDataAck.GetDataLen(),
+			}
+
+			if mbcd.stateManager.OnMapDataReceived != nil {
+				mbcd.stateManager.OnMapDataReceived(mapData)
+			}
+		}
+	}
+
 	if mbcd.commands.GetDeviceProductKey() == "" && mbcd.commands.GetDeviceName() == deviceName {
 		mbcd.commands.SetDeviceProductKey(productKey)
 	}
@@ -239,4 +270,13 @@ func (mbcd *MammotionBaseCloudDevice) parseMessagePropertiesForDevice(event inte
 
 func (mbcd *MammotionBaseCloudDevice) updateRawData(data []byte) {
 	// Implement this method
+}
+
+// extractDataCoupleAsInt32 converts CommDataCouple slice to int32 slice
+func extractDataCoupleAsInt32(dataCouples []*pb.CommDataCouple) []int32 {
+	result := make([]int32, 0, len(dataCouples)*2)
+	for _, dc := range dataCouples {
+		result = append(result, int32(dc.GetX()), int32(dc.GetY()))
+	}
+	return result
 }
