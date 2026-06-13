@@ -14,11 +14,25 @@ type HashListData struct {
 type MapData struct {
 	Type         int32
 	Hash         int64
-	DataCouple   []int32
+	DataCouple   []float32 // X,Y pairs in meters, full float precision
 	TotalFrame   int32
 	CurrentFrame int32
 	Action       int32
 	DataLen      int32
+	AreaLabel    string
+}
+
+// ZigZagData is one frame of the mower's planned coverage path (the back-and-
+// forth mowing route) for the current task, pushed by the device per zone.
+type ZigZagData struct {
+	JobId        uint64
+	CurrentZone  int32
+	TotalZoneNum int32
+	CurrentFrame int32
+	TotalFrame   int32
+	CurrentHash  uint64
+	DataCouple   []float32 // X,Y pairs in meters
+	SubCmd       int32
 }
 
 type StateManager struct {
@@ -32,6 +46,9 @@ type StateManager struct {
 	OnPositionUpdate       func(x, y float32, angle int32, posType int32) // Position callback
 	OnHashListReceived     func(*HashListData) // Hash list callback
 	OnMapDataReceived      func(*MapData) // Map data callback
+	OnChargePilePosition   func(toward int32, x, y float32) // Dock position callback
+	OnDeviceStatus         func(sysStatus, chargeState int32) // System/charge status callback
+	OnZigZagReceived       func(*ZigZagData) // Planned coverage-path frame callback
 	mu                     sync.Mutex
 }
 

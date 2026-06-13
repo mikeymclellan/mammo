@@ -185,10 +185,25 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 	// Extract battery data and position from system messages
 	if sys := lubaMsg.GetSys(); sys != nil {
 		if reportData := sys.GetToappReportData(); reportData != nil {
-			// Extract battery level
+			// Extract battery level + full dev status (for diagnostics)
 			if devStatus := reportData.GetDev(); devStatus != nil {
 				batteryLevel := devStatus.GetBatteryVal()
+				log.Printf("DEBUG: DevStatus sys_status=%d charge_state=%d battery=%d sensor=%d last_status=%d vslam=%d",
+					devStatus.GetSysStatus(), devStatus.GetChargeState(), batteryLevel,
+					devStatus.GetSensorStatus(), devStatus.GetLastStatus(), devStatus.GetVslamStatus())
+				if lock := devStatus.GetLockState(); lock != nil {
+					log.Printf("DEBUG: LockState %+v", lock)
+				}
 				mbcd.stateManager.UpdateBatteryFromProtobuf(batteryLevel)
+				if mbcd.stateManager.OnDeviceStatus != nil {
+					mbcd.stateManager.OnDeviceStatus(devStatus.GetSysStatus(), devStatus.GetChargeState())
+				}
+			}
+			if workState := reportData.GetWork(); workState != nil {
+				log.Printf("DEBUG: WorkState %+v", workState)
+			}
+			if rtk := reportData.GetRtk(); rtk != nil {
+				log.Printf("DEBUG: RTK %+v", rtk)
 			}
 
 			// Extract position data
@@ -227,15 +242,42 @@ func (mbcd *MammotionBaseCloudDevice) parseMessageForDevice(event interface{}) {
 			mapData := &MapData{
 				Type:         commonDataAck.GetType(),
 				Hash:         int64(commonDataAck.GetHash()),
-				DataCouple:   extractDataCoupleAsInt32(commonDataAck.GetDataCouple()),
+				DataCouple:   extractDataCouple(commonDataAck.GetDataCouple()),
 				TotalFrame:   commonDataAck.GetTotalFrame(),
 				CurrentFrame: commonDataAck.GetCurrentFrame(),
 				Action:       commonDataAck.GetAction(),
 				DataLen:      commonDataAck.GetDataLen(),
+				AreaLabel:    commonDataAck.GetAreaLabel().GetLabel(),
 			}
 
 			if mbcd.stateManager.OnMapDataReceived != nil {
 				mbcd.stateManager.OnMapDataReceived(mapData)
+			}
+		}
+
+		// Extract charge pile (dock) position
+		if chgPile := nav.GetToappChgpileto(); chgPile != nil {
+			if mbcd.stateManager.OnChargePilePosition != nil {
+				mbcd.stateManager.OnChargePilePosition(chgPile.GetToward(), chgPile.GetX(), chgPile.GetY())
+			}
+		}
+
+		// Extract planned coverage path (zigzag) frames
+		if zz := nav.GetToappZigzag(); zz != nil {
+			log.Printf("DEBUG: ZigZag frame job=%d zone=%d/%d frame=%d/%d points=%d",
+				zz.GetJobId(), zz.GetCurrentZone(), zz.GetTotalZoneNum(),
+				zz.GetCurrentFrame(), zz.GetTotalFrame(), len(zz.GetDataCouple()))
+			if mbcd.stateManager.OnZigZagReceived != nil {
+				mbcd.stateManager.OnZigZagReceived(&ZigZagData{
+					JobId:        zz.GetJobId(),
+					CurrentZone:  zz.GetCurrentZone(),
+					TotalZoneNum: zz.GetTotalZoneNum(),
+					CurrentFrame: zz.GetCurrentFrame(),
+					TotalFrame:   zz.GetTotalFrame(),
+					CurrentHash:  zz.GetCurrentHash(),
+					DataCouple:   extractDataCouple(zz.GetDataCouple()),
+					SubCmd:       zz.GetSubCmd(),
+				})
 			}
 		}
 	}
@@ -272,11 +314,13 @@ func (mbcd *MammotionBaseCloudDevice) updateRawData(data []byte) {
 	// Implement this method
 }
 
-// extractDataCoupleAsInt32 converts CommDataCouple slice to int32 slice
-func extractDataCoupleAsInt32(dataCouples []*pb.CommDataCouple) []int32 {
-	result := make([]int32, 0, len(dataCouples)*2)
+// extractDataCouple flattens CommDataCouple pairs preserving float precision.
+// The device sends coordinates as float32 meters; truncating to int32 (as the
+// old code did) collapsed the map to whole-meter resolution.
+func extractDataCouple(dataCouples []*pb.CommDataCouple) []float32 {
+	result := make([]float32, 0, len(dataCouples)*2)
 	for _, dc := range dataCouples {
-		result = append(result, int32(dc.GetX()), int32(dc.GetY()))
+		result = append(result, dc.GetX(), dc.GetY())
 	}
 	return result
 }

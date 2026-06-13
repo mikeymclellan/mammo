@@ -24,3 +24,5 @@ data/python
 
 # Protobuf generated files (if regenerated)
 proto/*.pb.go
+/.claude
+/map-live.json
